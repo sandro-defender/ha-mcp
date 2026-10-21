@@ -3,9 +3,13 @@ A Home Assistant OS add-on that provides a controlled gateway for AI
 coding agents and automation tools to work with Home Assistant and
 Proxmox VE without placing the underlying API tokens or SSH private keys
 in the agent's context.
-Project status: Design and implementation plan. This document
-describes the intended product; it does not claim that a finished,
-security-audited add-on already exists.
+Project status: implemented at version 0.1.0 and tested locally (unit and
+integration-style tests against the real ASGI apps). It has not been installed
+on a live Home Assistant OS system, has not been exercised against real Home
+Assistant, Proxmox VE, or SSH targets, and has not been security-audited. This
+document describes the product and, where it differs from the original plan,
+the behaviour of the code in this repository. See "Implementation status" and
+"Verification log" below, and `docs/SECURITY.md` for the threat model.
 
 Goals
 - Run as a dedicated Home Assistant OS add-on.
@@ -33,6 +37,37 @@ Non-goals
   or runtime isolation.
 - Do not allow agents to retrieve stored secret values through a
   "list", "debug", or configuration endpoint.
+Implementation status (0.1.0)
+Implemented and covered by tests:
+- Add-on skeleton (config.yaml, build.yaml, Dockerfile, run.sh,
+  apparmor.txt, repository.yaml) for amd64 and aarch64, unprivileged
+  runtime, Ingress panel, agent listener unpublished by default.
+- Encrypted credential vault: AES-256-GCM v1 format, Argon2id KEK,
+  wrapped DEK, lock/unlock, password change, data-key rotation,
+  encrypted export/import, optional auto-unlock, atomic writes with a
+  previous-good backup.
+- Per-agent bearer tokens (hash-only storage, scopes, expiry, rotation,
+  revocation, shown once), deny-by-default policy engine, approvals that
+  are single-use, expiring, and bound to the exact operation, audit log
+  with redaction and retention.
+- Home Assistant REST, Proxmox VE API read tools, and restricted SSH
+  (managed known-hosts, service status, log tail with path allowlists,
+  administrator-defined argv templates). 12 tools total, exposed
+  identically over REST and MCP.
+- Management panel (vanilla JS, no build step, strict CSP) with
+  dashboard, connections, credentials, tools, permissions, approvals,
+  audit, and settings, including the vault lifecycle.
+- Pytest suite (207 tests, including add-on metadata checks), ruff, strict mypy,
+  and GitHub Actions CI (lint, types, tests, static UI checks, amd64 image build).
+
+Not implemented or not verified in this release:
+- No live deployment, no real Home Assistant/Proxmox/SSH calls, no MCP
+  client end-to-end session, no Docker build on the development machine,
+  no security audit. `ha.get_logs` is not implemented; SSH log reads are
+  the supported log path. Proxmox write operations are intentionally
+  absent. Arbitrary SSH commands remain disabled by default and are
+  only reachable through administrator-defined templates.
+
 Architecture
 Windows PC
   AI coding agent / MCP client / scripts
@@ -307,38 +342,51 @@ Once a working release and repository exist:
    over a trusted LAN or VPN, using HTTPS where appropriate.
 10. Test denied operations, token revocation, audit redaction, and
     restart/restore before enabling writes.
-Suggested repository layout
-home-assistant-agent-gateway/
-├── repository.yaml
-├── README.md
-├── AGENT.md
-├── LICENSE
-├── agent_gateway/
-│   ├── config.yaml
-│   ├── Dockerfile
-│   ├── build.yaml
-│   ├── run.sh
-│   ├── app/
-│   │   ├── api/
-│   │   ├── auth/
-│   │   ├── vault/
-│   │   ├── policies/
-│   │   ├── approvals/
-│   │   ├── audit/
-│   │   ├── connectors/
-│   │   │   ├── home_assistant/
-│   │   │   ├── proxmox/
-│   │   │   └── ssh/
-│   │   ├── mcp/
-│   │   └── ui/
-│   └── tests/
-└── docs/
-    ├── SECURITY.md
-    ├── NETWORKING.md
-    ├── VAULT_RECOVERY.md
-    └── DEVELOPMENT.md
-The implementation may choose a different stack if there is a clear
-reason, but the security boundary and documented behavior must remain.
+Repository layout (actual)
+repository.yaml
+README.md
+AGENT.md
+CHANGELOG.md
+design-system/agent-gateway/MASTER.md   generated design tokens and rules
+docs/
+  PLAN.md            verified upstream requirements and decisions
+  SECURITY.md        threat model, controls, limitations
+  NETWORKING.md      listeners, TLS, client setup, firewall guidance
+  VAULT_RECOVERY.md  vault format, backup, recovery procedures
+  DEVELOPMENT.md     local setup, checks, coverage gaps
+agent_gateway/                       the add-on
+  config.yaml
+  Dockerfile
+  build.yaml
+  run.sh
+  apparmor.txt
+  requirements.txt
+  pyproject.toml
+  src/gateway/
+    __main__.py        both uvicorn servers, maintenance loop
+    runtime.py         composition root shared by admin and agent apps
+    settings.py        options.json + HAG_* environment
+    storage/db.py      SQLite schema and settings store
+    vault/             crypto envelope and vault manager
+    auth/              tokens, rate limiting, agent service
+    policy/            document schema and evaluation engine
+    approvals/         single-use approvals
+    audit/             redacted audit log
+    operations.py      one execution path for REST and MCP
+    connectors/        home_assistant.py, proxmox.py, ssh.py, http.py
+    tools/             specs, parameter models, registry
+    api/               admin + agent apps, middleware, schemas
+    mcp/server.py      stateless Streamable HTTP MCP endpoint
+    ui/static/         index.html, styles.css, app.js
+  tests/                             pytest suite
+pytest.ini                           lets `pytest` run from the repo root
+tools/ui-smoke/                      optional jsdom panel smoke harness
+.github/workflows/ci.yml             lint, types, tests, UI, image build
+
+The repository layout originally suggested an `app/` tree and docs such as
+`NETWORKING.md` and `VAULT_RECOVERY.md`; both exist now, with a `src/`
+package layout because the project is installed as a Python distribution.
+
 Related project to evaluate
 Review
 hassio-mcp-server
@@ -358,3 +406,55 @@ Definition of done
 - Windows connectivity instructions are accurate and tested.
 - Documentation covers install, upgrades, backups, recovery,
   networking, threat model, and limitations.
+
+Verification log (2026-10-22)
+Environment: Python 3.11.2 virtual environment; Node.js 22; no Docker daemon.
+
+Ran and passed:
+- pip install -e "agent_gateway[dev]"
+- ruff check agent_gateway/src agent_gateway/tests        All checks passed
+- ruff format --check agent_gateway/src agent_gateway/tests  60 files formatted
+- mypy src (strict)                                     no issues in 45 files
+- pytest agent_gateway/tests                            207 passed
+- node --check agent_gateway/src/gateway/ui/static/app.js
+- ASGI smoke test: /healthz 200; management API without Ingress user 401;
+  with Ingress headers 200; vault initialize/unlock; agent API 401 without a
+  token.
+- MCP session over ASGI: initialize, tools/list identical to the REST catalogue,
+  tools/call reading through the mocked connector, pending-approval flow, and a
+  write completed over REST using the approval created over MCP.
+- Panel render in jsdom (optional harness in tools/ui-smoke): every section,
+  the vault setup and unlock screens, dialogs, approvals, credential and policy
+  validation, with no JavaScript runtime errors.
+- Live process run (uvicorn, real TCP sockets, development settings on
+  127.0.0.1:18099/18098): vault initialization, credential and connection
+  creation, connection test, REST read, a write that returned 202 pending
+  approval, agent approve attempt rejected with 404, admin approval, retry
+  succeeded, audit rows written, and MCP initialize + tools/list over HTTP with
+  curl as an independent client. The upstream was a local stand-in server, not
+  a real Home Assistant. After shutdown `/data/vault.json` contained no
+  plaintext secret.
+
+Not run, and why:
+- Docker image build and add-on install/restart/upgrade — no Docker daemon or
+  Home Assistant OS instance available here.
+- Live Home Assistant, Proxmox VE, and SSH integration — no lab infrastructure;
+  connectors are covered by mocked HTTP, one local stand-in HTTP server, and
+  unit-level SSH trust tests.
+- MCP with an official SDK client — raw JSON-RPC was verified over a real
+  socket with curl, but no SDK client was run against the endpoint.
+- Real-browser rendering, screen-reader traversal, and visual regression — the
+  panel is covered by static invariants and a jsdom smoke run, not by a browser;
+  manual review is still required.
+- aarch64 build — declared in build.yaml but not built here.
+
+Before production use:
+1. Build and install the add-on on amd64 and aarch64 Home Assistant OS, verify
+   Ingress, restart persistence, snapshot/restore, and upgrade.
+2. Exercise real Home Assistant, Proxmox VE, and SSH targets, including host-key
+   rotation and TLS with a custom CA.
+3. Run an independent security review of the auth, policy, approval, and vault
+   code paths, plus a dependency audit.
+4. Add monitoring for repeated auth failures and approval volume, and document
+   an operational runbook.
+5. Confirm the Windows-agent connectivity path on the real network.

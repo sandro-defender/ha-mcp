@@ -1,0 +1,40 @@
+name: "Home Assistant Agent Gateway"
+version: "0.1.0"
+slug: "ha_agent_gateway"
+description: "Policy-controlled gateway for AI agents to operate Home Assistant, Proxmox VE, and restricted SSH targets without receiving credentials."
+url: "https://github.com/sandro-defender/ha-mcp"
+arch:
+  - amd64
+  - aarch64
+init: false
+startup: application
+boot: auto
+stage: experimental
+ingress: true
+ingress_port: 8099
+panel_icon: "mdi:robot"
+panel_title: "Agent Gateway"
+panel_admin: true
+map:
+  - type: ssl
+    read_only: true
+ports:
+  8098/tcp: null
+ports_description:
+  8098/tcp: "Agent REST and MCP API (off by default; enable only on a trusted LAN/VPN)"
+watchdog: "http://[HOST]:[PORT:8099]/healthz"
+options:
+  log_level: "info"
+  admin_user_ids: []
+  tls_certfile: ""
+  tls_keyfile: ""
+  audit_retention_days: 30
+  approval_ttl_seconds: 600
+schema:
+  log_level: "list(debug|info|warning|error)"
+  admin_user_ids:
+    - "str"
+  tls_certfile: "str"
+  tls_keyfile: "str"
+  audit_retention_days: "int(1,3650)"
+  approval_ttl_seconds: "int(30,3600)"

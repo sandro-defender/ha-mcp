@@ -1,0 +1,67 @@
+#include <tunables/global>
+
+profile ha_agent_gateway flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # Network access for the listeners and outbound connectors.
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+
+  # Only what the root entrypoint needs before it drops to the app user:
+  # fixing /data ownership and switching uid/gid.  The application itself runs
+  # without capabilities.
+  capability chown,
+  capability dac_override,
+  capability setgid,
+  capability setuid,
+
+  # Entrypoint (runs as root only to fix /data ownership, then execs su-exec).
+  /bin/bash ix,
+  /bin/sh ix,
+  /usr/bin/env ix,
+  /usr/bin/id ix,
+  /usr/bin/chown ix,
+  /bin/chown ix,
+  /usr/bin/su-exec ix,
+  /sbin/su-exec ix,
+  /run.sh rix,
+
+  # Python runtime and application.
+  /usr/bin/python3* ix,
+  /usr/lib/python3*/** r,
+  /opt/venv/bin/python* ix,
+  /opt/venv/** r,
+  /app/** r,
+
+  # Application state and temporary files.
+  /data/** rw,
+  /data/ rw,
+  /ssl/** r,
+  /tmp/** rw,
+  /tmp/ rw,
+
+  # DNS, users, and CA trust store (read-only).
+  /etc/passwd r,
+  /etc/group r,
+  /etc/hosts r,
+  /etc/resolv.conf r,
+  /etc/nsswitch.conf r,
+  /etc/services r,
+  /etc/protocols r,
+  /etc/ssl/** r,
+  /etc/ca-certificates/** r,
+  /usr/share/ca-certificates/** r,
+  /etc/ld.so.cache r,
+  /lib/** r,
+  /usr/lib/** r,
+  /usr/share/zoneinfo/** r,
+  /dev/urandom r,
+  /dev/random r,
+  /dev/null rw,
+
+  # Process management from the parent shell.
+  signal (send) set=(kill,term,int,hup,cont),
+  signal (receive),
+}

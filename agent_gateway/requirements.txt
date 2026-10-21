@@ -1,0 +1,10 @@
+# Runtime dependencies for ha-agent-gateway, mirroring the pins in pyproject.toml.
+# Install with:  python -m pip install -r requirements.txt
+fastapi==0.159.1
+uvicorn[standard]==0.54.0
+mcp==2.3.0
+httpx==0.28.1
+pydantic==2.14.1
+argon2-cffi==25.1.0
+cryptography==50.0.2
+asyncssh==2.24.1
