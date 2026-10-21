@@ -1,0 +1,13 @@
+{
+  "name": "ha-agent-gateway-ui-smoke",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Optional jsdom smoke harness for the management panel",
+  "scripts": {
+    "test": "node panel_smoke.mjs && node panel_paths.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0"
+  }
+}

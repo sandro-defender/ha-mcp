@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f4f6fb" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b1220" media="(prefers-color-scheme: dark)">
+  <meta name="description" content="Home Assistant Agent Gateway management panel">
+  <meta name="referrer" content="no-referrer">
+  <title>Agent Gateway</title>
+  <link rel="stylesheet" href="static/styles.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Rendered by app.js. This fallback is visible until the first paint. -->
+    <main class="main" id="main-content" tabindex="-1">
+      <div class="auth-wrap">
+        <div class="card glass auth-card">
+          <div class="brand">
+            <span class="brand-mark">
+              <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                <path d="M12 3l7 3v5.5c0 4.4-3 8-7 9.5-4-1.5-7-5.1-7-9.5V6l7-3z"/>
+                <path d="M8.8 12l2.2 2.2 4.2-4.4"/>
+              </svg>
+            </span>
+            <span>
+              <span class="brand-name">Agent Gateway</span>
+              <span class="brand-meta">Home Assistant add-on</span>
+            </span>
+          </div>
+          <div class="skeleton-stack" aria-hidden="true">
+            <div class="skeleton skeleton-line"></div>
+            <div class="skeleton skeleton-block"></div>
+          </div>
+          <p class="field-hint" role="status">Loading the management panel…</p>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <noscript>
+    <div class="main">
+      <div class="card auth-card">
+        <h1>JavaScript is required</h1>
+        <p>The management panel is a client-side application. Agent access over REST and MCP is unaffected.</p>
+      </div>
+    </div>
+  </noscript>
+
+  <div id="toast" class="toast" data-tone="ok" data-visible="false" role="status" aria-live="polite"></div>
+  <div id="live-region" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-hidden="true">
+    <div class="modal-card" tabindex="-1">
+      <div class="modal-header">
+        <h2 id="modal-title">Dialog</h2>
+        <button type="button" class="icon-button" id="modal-close" aria-label="Close dialog">
+          <svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M6 6l12 12M18 6L6 18"/>
+          </svg>
+        </button>
+      </div>
+      <div id="modal-body" class="modal-body"></div>
+      <div class="modal-footer" id="modal-actions"></div>
+    </div>
+  </div>
+
+  <script src="static/app.js"></script>
+</body>
+</html>

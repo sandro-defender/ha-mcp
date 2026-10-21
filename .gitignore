@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local runtime data (never commit vaults, databases, or unlock keys)
+data/
+*.db
+*.db-journal
+*.db-wal
+vault.json
+vault.json.bak
+unlock.key
+
+# Node / editor / OS noise
+node_modules/
+.DS_Store
+.idea/
+.vscode/
