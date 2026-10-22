@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **The add-on store kept offering 0.1.0 after 0.2.x/0.3.0 were released.** The aggregator repository `sandro-defender/ha-addons` (the one most users add to Home Assistant) includes this project as a *git submodule*, and Supervisor only reads the commit pinned there — `ha-mcp` was still pinned to `2ca33a9` (add-on `0.1.0`). Documented the mechanism and both fixes in [`docs/ADDON_UPDATES.md`](docs/ADDON_UPDATES.md), added [`tools/ha-addons-sync/`](tools/ha-addons-sync/) (one-shot pin-bump script plus an hourly `sync-addons.yml` workflow for `ha-addons`), and added `.github/workflows/addon-pin-check.yml`, a daily watchdog that fails with exact fix instructions when `ha-addons` pins an older version than `main`.
 
+## [0.3.1] - 2026-10-22
+
+### Fixed
+- **`/init` startup permission denial on some Supervisor installs.** The previous custom AppArmor rule allowed execution (`ix`) but not reading the entrypoint. When Supervisor invokes `/init` through `/bin/sh`, the shell must read the file and otherwise logs `/bin/sh: can't open '/init': Permission denied`. Grant read + inherited execution (`rix`) for `/init`; packaging regression test updated. Update the add-on to 0.3.1 or later.
+
 ## [0.3.0] - 2026-10-22
 
 ### Added

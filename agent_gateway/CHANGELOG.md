@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-22
+
+### Fixed
+- **`/init` startup permission denial on some Supervisor installs.** The previous custom AppArmor rule allowed execution (`ix`) but not reading the entrypoint. When Supervisor invokes `/init` through `/bin/sh`, the shell must read the file and otherwise logs `/bin/sh: can't open '/init': Permission denied`. Grant read + inherited execution (`rix`) for `/init`; packaging regression test updated. Update the add-on to 0.3.1 or later.
+
+
 ## [0.3.0] - 2026-10-22
 
 ### Added

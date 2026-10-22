@@ -123,13 +123,14 @@ def test_apparmor_permits_s6_init_entrypoint() -> None:
     The HA base image's ENTRYPOINT is the S6-Overlay v3 `/init` (PID 1, hence
     `init: false` in config.yaml so Supervisor does not add Docker's init).
     A custom apparmor.txt replaces the default profile, so it must itself
-    grant execute access to /init and the s6 trees — the previous profile
-    granted only /run.sh and Python paths, so AppArmor denied /init before
-    any application code ran. Per HA developer docs, custom profiles for
-    S6 base images must include these rules.
+    grant read and execute access to /init and execute access to the s6 trees.
+    Supervisor may invoke /init through /bin/sh, which needs read access; an
+    execute-only rule can still produce `can't open '/init': Permission denied`.
+    Per HA developer docs, custom profiles for S6 base images must include the
+    relevant S6 rules.
     """
     for rule in (
-        "/init ix,",
+        "/init rix,",
         "/package/** ix,",
         "/command/** ix,",
         "/etc/services.d/** rwix,",

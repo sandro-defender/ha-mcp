@@ -4,14 +4,17 @@ A Home Assistant OS add-on that lets AI agents read and (with explicit human
 approval) act on Home Assistant, Proxmox VE, and restricted SSH targets
 **without ever receiving the underlying credentials**.
 
-Version 0.1.0 · experimental · not security-audited.
+Version 0.3.1 · experimental · not security-audited.
 
 ## Install
 
 1. In Home Assistant: **Settings → Apps → App store → ⋮ → Repositories**, add
    the URL of this repository.
-2. Install **Home Assistant Agent Gateway** and review the permissions shown by
-   the Supervisor.
+2. Install **Home Assistant Agent Gateway** and review its configuration.
+   Home Assistant may not show a separate permission prompt: the add-on's
+   AppArmor profile is applied automatically by Supervisor. The additional
+   host path `/ssl` is mounted read-only and used only for optional TLS
+   certificates.
 3. Start the add-on and open **Agent Gateway** in the sidebar.
 4. Create the vault master password (minimum 12 characters; there is no
    recovery path). Store it in a password manager.
@@ -20,6 +23,12 @@ Version 0.1.0 · experimental · not security-audited.
    shown once.
 7. Only if the agent runs on another machine: open the add-on **Network**
    section and publish `8098`. Leave it unpublished otherwise.
+
+If startup logs show `/bin/sh: can't open '/init': Permission denied`, this is
+not caused by the absence of a permission prompt. It indicates an older add-on
+package with an incomplete AppArmor profile; update to version 0.3.1 or later.
+If installed via an add-on aggregator, its repository may pin an older copy—see
+[`docs/ADDON_UPDATES.md`](../docs/ADDON_UPDATES.md) for update steps.
 
 Step-by-step recovery, backup, and networking notes are in
 [`docs/VAULT_RECOVERY.md`](../docs/VAULT_RECOVERY.md) and
