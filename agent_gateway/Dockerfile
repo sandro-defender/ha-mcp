@@ -2,7 +2,7 @@ ARG BUILD_FROM=ghcr.io/home-assistant/base:3.24
 FROM ${BUILD_FROM}
 
 ARG BUILD_ARCH
-ARG BUILD_VERSION=0.2.1
+ARG BUILD_VERSION=0.3.0
 
 LABEL \
   io.hass.name="Home Assistant Agent Gateway" \

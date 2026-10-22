@@ -39,7 +39,8 @@ and REST operations both go through `OperationService.execute`
 | Agent authentication | 256-bit random token, stored as a SHA-256 digest only, shown once, prefix retained for display |
 | Token handling | Missing, duplicate, or non-Bearer headers rejected; tokens in query strings rejected with `400 token_in_query`; auth failures rate-limited per peer |
 | Deny by default | A policy document with no matching allow rule denies; unknown fields, unknown constraints, and malformed documents are rejected and the previous policy is kept |
-| Least privilege | Scopes (`ha:read`, `ha:write`, `proxmox:read`, `ssh:read`, `ssh:write`, `audit:read`) and per-rule target filters (`entities`, `domains`, `nodes`, `vms`, `ssh_paths`, …) |
+| Least privilege | Scopes (`ha:read`, `ha:write`, `proxmox:read`, `ssh:read`, `ssh:write`, `audit:read`, `journal:read`, `journal:write`) and per-rule target filters (`entities`, `domains`, `nodes`, `vms`, `ssh_paths`, …) |
+| Project Journal | Same `PolicyService` via `journal.*` pseudo-tools (scope + rule + rate limit + audit on REST and MCP); records are redacted pre-storage, append-only (no edit/delete routes), owner-scoped for writes, idempotency-keyed; `require_approval` on a journal rule denies (journal writes execute nothing and are not approval-gated) |
 | Approvals | Required for every non-read tool; bound to agent, tool, connection, canonicalized parameters, policy revision, and tool schema; single use; expiring |
 | Revalidation | Agent state, emergency switch, and policy are re-evaluated immediately before the sensitive call |
 | Credential isolation | `CredentialVault` never returns secret values over HTTP; agent routes expose only name/type/status |
@@ -86,6 +87,12 @@ and REST operations both go through `OperationService.execute`
    `/data` ownership and immediately drops to uid 1000.
 9. **No security audit, no penetration test, no fuzzing.** Treat this as
    experimental software.
+10. **Journal evidence is self-reported.** Verification levels record who
+    claimed what, when, with which command/exit/output; the gateway does
+    not run the tests. Any agent with `journal:read` can read the whole
+    project journal (required for handoffs) — grant journal scopes only
+    to agents allowed to see project history, and cross-check claims
+    against git/CI. Redaction of pasted secrets is pattern-based.
 
 ## Reporting
 

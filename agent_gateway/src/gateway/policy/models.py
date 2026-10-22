@@ -176,4 +176,35 @@ READ_ONLY_TEMPLATES: dict[str, dict[str, object]] = {
             }
         ],
     },
+    # Project Journal pseudo-tools are connectionless: rules must use "*".
+    # Journal operations are not approval-gated; require_approval on a journal
+    # rule denies the call (see gateway.journal.service.authorize_agent_journal).
+    "journal_read": {
+        "version": 1,
+        "rules": [
+            {
+                "id": "journal-read",
+                "effect": "allow",
+                "tools": [
+                    "journal.read_project_state",
+                    "journal.list_tasks",
+                    "journal.list_entries",
+                    "journal.list_test_runs",
+                    "journal.list_sessions",
+                ],
+                "connections": ["*"],
+            }
+        ],
+    },
+    "journal_readwrite": {
+        "version": 1,
+        "rules": [
+            {
+                "id": "journal-readwrite",
+                "effect": "allow",
+                "tools": ["journal.*"],
+                "connections": ["*"],
+            }
+        ],
+    },
 }

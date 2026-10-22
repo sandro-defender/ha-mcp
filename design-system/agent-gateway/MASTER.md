@@ -31,9 +31,9 @@ All token pairs are verified in `agent_gateway/tests/test_ui_assets.py` for WCAG
 | `--color-danger` | `#b91c1c` | `#f87171` | Policy denials, auth failures, emergency stop, revocation |
 | `--color-focus` | `#005a9e` | `#38bdf8` | `:focus-visible` keyboard outline |
 
-## 3. 10-Section Information Architecture
+## 3. 11-Section Information Architecture
 
-The sidebar navigation organizes the gateway into 10 dedicated operational workspaces:
+The sidebar navigation organizes the gateway into 11 dedicated operational workspaces:
 
 1. **Overview (`#overview` / `#dashboard`)**: Post-update release banner, proactive security warnings, health telemetry cards, security posture checklist, pending approval queue preview, recent activity, and GitHub links.
 2. **Connections (`#connections`)**: Home Assistant, Proxmox VE, and non-root SSH targets with multi-step connection diagnostics, latency tracking, error classification, `last_ok_at` timestamps, and SSH `known_hosts` enrollment.
@@ -43,5 +43,6 @@ The sidebar navigation organizes the gateway into 10 dedicated operational works
 6. **Permissions (`#permissions`)**: Visual allow/deny policy rule builder, starter templates, raw JSON policy editor, and an interactive **Policy Simulator** (`POST /api/admin/policies/evaluate`).
 7. **Approvals (`#approvals`)**: Pending human approval queue with requester identity, target connection, risk badge, redacted parameter summary, SHA-256 request hash, expiration countdown, and single-use Approve / Reject controls.
 8. **Audit Log (`#audit`)**: Searchable, filterable, paginated SQLite WAL audit log with actor/tool/status filters, detail inspection modal, redaction verification, and JSON export.
-9. **Updates and Changelog (`#updates`)**: Installed vs. latest version status, on-demand cached GitHub release check, post-update notice & migration notes, structured Keep-a-Changelog release history, and repository links.
-10. **Settings and Diagnostics (`#settings`)**: Theme selector (`System`, `Light`, `Dark`), TTL/retention/timeout bounds, readiness probes (`/readyz`), and redacted diagnostic bundle export (`gateway-diagnostics-redacted.json`).
+9. **Project Journal (`#journal`)**: Persistent agent work journal — project-state overview with revision, work-status counts and active sessions, prioritized Next steps with dependency blockers, record-work/add-task forms, a filterable chronological timeline (completed/failed/blocked/unverified, search, type, commit) showing verification-level badges and test evidence, and a session-handoff card (Generate Handoff Prompt → editable preview → copy; previous handoffs loadable). Real persisted records only; explicit loading/empty/error/access-denied states.
+10. **Updates and Changelog (`#updates`)**: Installed vs. latest version status, on-demand cached GitHub release check, post-update notice & migration notes, structured Keep-a-Changelog release history, and repository links.
+11. **Settings and Diagnostics (`#settings`)**: Theme selector (`System`, `Light`, `Dark`), TTL/retention/timeout bounds, readiness probes (`/readyz`), and redacted diagnostic bundle export (`gateway-diagnostics-redacted.json`).

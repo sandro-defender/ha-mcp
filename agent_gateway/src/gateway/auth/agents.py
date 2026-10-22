@@ -28,6 +28,8 @@ ALLOWED_SCOPES = frozenset(
         "ssh:read",
         "ssh:write",
         "audit:read",
+        "journal:read",
+        "journal:write",
     }
 )
 
@@ -39,6 +41,11 @@ SCOPE_DESCRIPTIONS = {
     "ssh:read": "Run allowlisted service checks and read allowlisted logs over SSH",
     "ssh:write": "Run administrator-defined command templates over SSH",
     "audit:read": "Read the gateway audit log (administrator agents only)",
+    "journal:read": "Read the Project Journal: project state, tasks, work history, test evidence",
+    "journal:write": (
+        "Write to the Project Journal: sessions, tasks, work entries, decisions, issues, "
+        "test runs, handoffs (policy rules still apply; records are redacted and immutable)"
+    ),
 }
 
 

@@ -6,6 +6,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-22
+
+### Added
+- **Persistent AI Agent Work Journal & Session Handoff System** (`gateway.journal`, schema v3): eight new `journal_*` tables (projects, sessions, tasks + dependency edges, work entries, decisions, issues/failed approaches, test runs, handoffs) migrated automatically from v2 without touching existing records. Every record is project-scoped, agent/admin-attributed, timestamped, redacted before storage, and idempotency-keyed so agent retries cannot duplicate records.
+- **Journal API on all surfaces**: agent REST (`/api/v1/journal/*`), admin REST (`/api/admin/journal/*`), and connectionless MCP tools (`journal.read_project_state`, `record_work`, `record_test_run`, `generate_handoff`, …) sharing one authorization path — new `journal:read`/`journal:write` scopes plus central-policy `journal.*` pseudo-tools, policy rate limits, and audit events for writes and denials. Starter templates `journal_read` / `journal_readwrite`.
+- **Accuracy rules enforced server-side**: five verification levels (`claimed`, `automated_tests`, `integration_verified`, `not_tested`, `blocked_infrastructure`) stored verbatim and never upgraded; tasks can only complete with evidence levels; dependency cycles rejected and unfinished dependencies block progress (`409`); validated status transitions; append-only history with owner-scoped writes and optimistic-concurrency project state.
+- **Project Journal UI (11th panel section)**: project-state overview with revision and optimistic-concurrency editor, work-status counts, active sessions (admin can end), prioritized Next steps with dependency blockers, record-work/add-task forms, filterable timeline (completed/failed/blocked/unverified, record type, search, commit) with test evidence and agent/session attribution, and a session-handoff card — **Generate Handoff Prompt**, editable preview, copy action, previous-handoff loading. Real persisted data only; loading, empty, error, and access-denied states implemented.
+- **Handoff prompt generator**: bounded (≤16k chars) continuation prompt from current records — identity/purpose, branch/commit/revision, architecture/conventions, constraints, completed work with evidence levels, failures and failed-approach lessons, open bugs/security issues, focus task with acceptance criteria and blockers, prioritized next actions, recent test evidence, and a verification checklist; journal text is labelled untrusted and generation never executes anything.
+- **Agent instruction set**: `AGENTS.md` (living project-wide instructions incl. the journal session lifecycle; `AGENT.md` kept as the historical bootstrap prompt), `CLAUDE.md` pointer, `docs/PROJECT_STATE.md`, `docs/WORKLOG.md`, `docs/NEXT_STEPS.md`, and `docs/JOURNAL.md` (architecture, schema, API, retention/backup, security limitations, manual verification).
+
+### Changed
+- **SQLite schema v2 → v3** (journal tables; upgrade verified by migration + restart-persistence tests and a socket-level process-restart check).
+- Panel section count 10 → 11; policy editor gained Journal read-only / read-write template buttons.
+
+### Security
+- Journal writes are authorized by the same deny-by-default policy engine (REST/MCP parity via one function), rate-limited (rule limit honored, capped at 120/min), and audited; `require_approval` on a journal rule *denies* (journal records execute nothing); cross-agent modification of tasks/issues/sessions is refused; oversized bodies (`413`) and all inputs are validated server-side; a journal entry cannot approve or unlock anything.
+
+### Known limitations
+- Verified in this environment by the full suite (253 tests), the jsdom panel smoke harness (incl. journal checks), and a real-socket dev-instance E2E with process restart. Live Home Assistant OS installation and real HA/Proxmox/SSH integration were **not** run (no lab/Docker daemon here), and no third-party security audit has been performed. Journal verification levels are self-reported evidence metadata, not proof — see `docs/JOURNAL.md`. One `default` journal project is seeded; multi-project management endpoints are not exposed yet.
+
 ## [0.2.1] - 2026-10-22
 
 ### Fixed
