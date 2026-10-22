@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The add-on store kept offering 0.1.0 after 0.2.x/0.3.0 were released.** The aggregator repository `sandro-defender/ha-addons` (the one most users add to Home Assistant) includes this project as a *git submodule*, and Supervisor only reads the commit pinned there — `ha-mcp` was still pinned to `2ca33a9` (add-on `0.1.0`). Documented the mechanism and both fixes in [`docs/ADDON_UPDATES.md`](docs/ADDON_UPDATES.md), added [`tools/ha-addons-sync/`](tools/ha-addons-sync/) (one-shot pin-bump script plus an hourly `sync-addons.yml` workflow for `ha-addons`), and added `.github/workflows/addon-pin-check.yml`, a daily watchdog that fails with exact fix instructions when `ha-addons` pins an older version than `main`.
+
 ## [0.3.0] - 2026-10-22
 
 ### Added

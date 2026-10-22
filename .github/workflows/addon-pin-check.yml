@@ -1,0 +1,83 @@
+name: Add-on pin check
+
+# Home Assistant serves this add-on from the aggregator repository
+# sandro-defender/ha-addons, which pins this repository as a git submodule.
+# Supervisor only reads that pinned commit, so a version bump here stays
+# invisible in the add-on store until the pin is bumped there.
+# This check reports when the pin is behind — see docs/ADDON_UPDATES.md.
+
+on:
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pin:
+    name: ha-addons pins the current version
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ADDONS_REPO: sandro-defender/ha-addons
+      SUBMODULE_PATH: ha-mcp
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare pinned version with main
+        run: |
+          set -uo pipefail
+
+          here_version=$(sed -nE 's/^version:[[:space:]]*"?([^"[:space:]]+)"?.*/\1/p' \
+            agent_gateway/config.yaml | head -1)
+          echo "version on $GITHUB_REF_NAME: ${here_version:-unknown}"
+
+          pin=$(gh api "repos/$ADDONS_REPO/contents/$SUBMODULE_PATH" --jq '.sha // empty' 2>/dev/null || true)
+          if [ -z "$pin" ]; then
+            echo "::warning::$ADDONS_REPO does not contain '$SUBMODULE_PATH' (or is not reachable). Nothing to compare."
+            exit 0
+          fi
+          echo "pin in $ADDONS_REPO: $pin"
+
+          pinned_config=$(gh api "repos/$GITHUB_REPOSITORY/contents/agent_gateway/config.yaml?ref=$pin" --jq '.content // empty' 2>/dev/null || true)
+          if [ -z "$pinned_config" ]; then
+            echo "::warning::Could not read agent_gateway/config.yaml at $pin in $GITHUB_REPOSITORY."
+            exit 0
+          fi
+          pinned_version=$(printf '%s' "$pinned_config" | base64 -d | \
+            sed -nE 's/^version:[[:space:]]*"?([^"[:space:]]+)"?.*/\1/p' | head -1)
+          echo "version pinned by $ADDONS_REPO: ${pinned_version:-unknown}"
+
+          {
+            echo "### Add-on store pin"
+            echo
+            echo "| | value |"
+            echo "| --- | --- |"
+            echo "| \`$GITHUB_REPOSITORY@$GITHUB_REF_NAME\` | \`${here_version:-unknown}\` |"
+            echo "| \`$ADDONS_REPO\` → \`$SUBMODULE_PATH\` | \`${pinned_version:-unknown}\` (\`${pin:0:7}\`) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$pinned_version" = "$here_version" ]; then
+            echo "The add-on store already offers ${here_version}." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          {
+            echo
+            echo "**The add-on store in Home Assistant still offers \`${pinned_version:-unknown}\`**, because \`$ADDONS_REPO\` pins \`${pin:0:7}\`."
+            echo
+            echo "Bump the pin (see \`docs/ADDON_UPDATES.md\`):"
+            echo
+            echo '```bash'
+            echo 'git clone https://github.com/sandro-defender/ha-addons.git'
+            echo 'cd ha-addons'
+            echo "git submodule update --init --remote --depth 1 -- $SUBMODULE_PATH"
+            echo "git add $SUBMODULE_PATH && git commit -m 'Update $SUBMODULE_PATH to ${here_version}' && git push"
+            echo '```'
+            echo
+            echo "Or run \`tools/ha-addons-sync/bump-ha-addons-pin.sh\`. Afterwards press **Check for updates** in the add-on store."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "::error::$ADDONS_REPO pins add-on version ${pinned_version:-unknown}, but this branch is at ${here_version:-unknown}."
+          exit 1

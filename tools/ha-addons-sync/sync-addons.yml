@@ -1,0 +1,119 @@
+name: Sync add-ons from upstream
+
+# Home Assistant's add-on store only sees the commits that are pinned in this
+# repository. Add-ons stored as git submodules therefore never move forward --
+# and users keep seeing the old version -- until the pin is bumped here.
+# This workflow bumps the pins for the add-ons we own, so a new version in the
+# upstream repo becomes available in Home Assistant without manual work.
+
+on:
+  schedule:
+    # Hourly. Supervisor only re-reads custom repositories about once a day, so
+    # running more often would not make updates appear any sooner.
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Bump the pin even when the version in config.yaml did not change"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-addons
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Bump submodule pins
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Update owned submodules to their branch head
+        env:
+          FORCE: ${{ inputs.force || 'false' }}
+        run: |
+          set -uo pipefail
+
+          git config user.name "addon-sync[bot]"
+          git config user.email "addon-sync@users.noreply.github.com"
+
+          # Only add-ons whose upstream repository we control. The others are
+          # updated by their own maintainers.
+          SUBMODULES="ha-mcp Github-Sync"
+
+          # Read the add-on version from <path>/config.yaml or <path>/*/config.yaml
+          read_version() {
+            local dir="$1" file
+            for file in "$dir/config.yaml" "$dir"/*/config.yaml; do
+              [ -f "$file" ] || continue
+              sed -nE 's/^version:[[:space:]]*"?([^"[:space:]]+)"?.*/\1/p' "$file" | head -1
+              return 0
+            done
+            return 0
+          }
+
+          changed=0
+          summary=""
+
+          for path in $SUBMODULES; do
+            pinned=$(git ls-tree HEAD "$path" | awk '{print $3}')
+            if [ -z "$pinned" ]; then
+              echo "::warning::$path is not a submodule in this checkout, skipping"
+              continue
+            fi
+
+            # Check out the currently pinned commit first so we can read the
+            # version that is published right now.
+            if ! git submodule update --init --recursive --depth 1 -- "$path"; then
+              echo "::error::could not check out pinned commit for $path"
+              exit 1
+            fi
+            old_version=$(read_version "$path")
+
+            # Move the working tree to the tip of the branch from .gitmodules.
+            if ! git submodule update --init --recursive --depth 1 --remote -- "$path"; then
+              echo "::error::could not update $path to its branch head"
+              exit 1
+            fi
+            new=$(git -C "$path" rev-parse HEAD)
+            new_version=$(read_version "$path")
+
+            if [ "$pinned" = "$new" ]; then
+              echo "$path already at ${new:0:7} (version ${new_version:-unknown})"
+              continue
+            fi
+
+            if [ "$old_version" = "$new_version" ] && [ "${FORCE:-false}" != "true" ]; then
+              echo "::notice::$path moved ${pinned:0:7} -> ${new:0:7} but the version is still ${new_version:-unknown}; not publishing"
+              git submodule update --init --recursive --depth 1 -- "$path" || true
+              continue
+            fi
+
+            echo "::notice::$path ${old_version:-unknown} -> ${new_version:-unknown} (${pinned:0:7} -> ${new:0:7})"
+            summary="${summary}- \`${path}\`: ${old_version:-unknown} → ${new_version:-unknown} (\`${pinned:0:7}\` → \`${new:0:7}\`)"$'\n'
+            changed=1
+          done
+
+          if [ "$changed" -eq 0 ]; then
+            echo "Nothing to sync."
+            exit 0
+          fi
+
+          {
+            echo "chore(sync): publish new add-on versions"
+            echo
+            echo "Submodule pins bumped by .github/workflows/sync-addons.yml:"
+            echo
+            printf '%s' "$summary"
+          } > /tmp/commit-message
+
+          git add -A
+          git commit -F /tmp/commit-message
+          git push
