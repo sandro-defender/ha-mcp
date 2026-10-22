@@ -14,6 +14,7 @@ from typing import Any
 
 import httpx
 
+from .. import __version__
 from ..errors import ConnectorError, OutputTooLarge
 
 ERROR_BODY_LIMIT = 2048
@@ -42,13 +43,25 @@ def make_client(*, ca_pem: str | None = None) -> httpx.AsyncClient:
         follow_redirects=False,
         timeout=httpx.Timeout(connect=DEFAULT_CONNECT_TIMEOUT, read=30.0, write=10.0, pool=5.0),
         limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
-        headers={"User-Agent": "ha-agent-gateway/0.1"},
+        headers={"User-Agent": f"ha-agent-gateway/{__version__}"},
     )
 
 
 def _status_error(status: int) -> ConnectorError:
-    if status in (401, 403):
-        return ConnectorError("upstream_auth_failed", "upstream rejected the gateway credential", status=502)
+    if status == 401:
+        return ConnectorError(
+            "upstream_auth_failed",
+            "upstream rejected the gateway credential",
+            status=502,
+            details={"http_status": 401, "reason": "authentication_failed"},
+        )
+    if status == 403:
+        return ConnectorError(
+            "upstream_auth_failed",
+            "upstream rejected the gateway credential (insufficient permissions)",
+            status=502,
+            details={"http_status": 403, "reason": "permission_denied"},
+        )
     if status == 404:
         return ConnectorError(
             "upstream_not_found", "the requested resource was not found upstream", status=404
@@ -64,6 +77,20 @@ def _status_error(status: int) -> ConnectorError:
     if 400 <= status < 500:
         return ConnectorError("upstream_rejected", "the upstream service rejected the request", status=502)
     return ConnectorError("upstream_error", "the upstream service is unavailable", status=502)
+
+
+def _is_tls_connect_error(exc: BaseException) -> bool:
+    current: BaseException | None = exc
+    visited = 0
+    while current is not None and visited < 6:
+        visited += 1
+        if isinstance(current, ssl.SSLError):
+            return True
+        text = str(current).upper()
+        if "CERTIFICATE_VERIFY_FAILED" in text or "SSL:" in text or "TLS" in text:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 async def request_json(
@@ -90,6 +117,13 @@ async def request_json(
             "upstream_timeout", "the upstream service did not respond in time", status=504
         ) from exc
     except httpx.ConnectError as exc:
+        if _is_tls_connect_error(exc):
+            raise ConnectorError(
+                "tls_verification_failed",
+                "TLS certificate verification failed for the upstream service",
+                status=502,
+                details={"reason": "tls_certificate_error"},
+            ) from exc
         raise ConnectorError(
             "upstream_unreachable", "could not connect to the upstream service", status=502
         ) from exc

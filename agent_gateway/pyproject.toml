@@ -1,10 +1,11 @@
 [project]
 name = "ha-agent-gateway"
-version = "0.1.0"
+version = "0.2.0"
 description = "Policy-controlled gateway for AI agents to operate Home Assistant and Proxmox VE"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
+urls = { Homepage = "https://github.com/sandro-defender/ha-mcp", Repository = "https://github.com/sandro-defender/ha-mcp", Changelog = "https://github.com/sandro-defender/ha-mcp/blob/main/CHANGELOG.md", Issues = "https://github.com/sandro-defender/ha-mcp/issues" }
 dependencies = [
   "fastapi==0.159.1",
   "uvicorn[standard]==0.54.0",

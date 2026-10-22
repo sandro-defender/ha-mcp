@@ -55,25 +55,29 @@
   };
 
   const NAV = [
-    ["dashboard", "Dashboard", "dashboard"],
+    ["dashboard", "Overview", "dashboard"],
     ["connections", "Connections", "connections"],
     ["credentials", "Credentials", "key"],
+    ["agents", "Agents", "shield"],
     ["tools", "Tools", "tools"],
     ["permissions", "Permissions", "shield"],
     ["approvals", "Approvals", "approvals"],
-    ["audit", "Audit", "audit"],
-    ["settings", "Settings", "settings"],
+    ["audit", "Audit Log", "audit"],
+    ["updates", "Updates & Changelog", "refresh"],
+    ["settings", "Settings & Diagnostics", "settings"],
   ];
 
   const SUBTITLES = {
-    dashboard: "Security posture, coverage, and the most recent gateway activity.",
-    connections: "Home Assistant, Proxmox VE, and restricted SSH profiles. Test each one before you rely on it.",
-    credentials: "Secrets are encrypted at rest and never displayed again after saving.",
-    tools: "Tool groups exposed to agents. The policy engine still authorizes every individual call.",
-    permissions: "Agent identities, scopes, and per-agent policy documents.",
+    dashboard: "System health, security posture, pending actions, and release status.",
+    connections: "Home Assistant, Proxmox VE, and restricted SSH profiles with actionable diagnostics.",
+    credentials: "Encrypted vault — secrets are never displayed again after saving.",
+    agents: "Per-agent identities, scopes, token lifecycle, and usage insights.",
+    tools: "Tool groups and schemas — the same engine serves REST and MCP.",
+    permissions: "Central policy documents, templates, and the live policy simulator.",
     approvals: "Single-use approvals bound to the exact operation, parameters, and policy revision.",
-    audit: "Redacted event history. Secrets, headers, and private keys never appear here.",
-    settings: "Vault lifecycle, limits, retention, and the emergency stop.",
+    audit: "Searchable, filterable audit trail with redaction and retention.",
+    updates: "Installed version, release history, migration notes, and update checks.",
+    settings: "Theme, limits, vault lifecycle, health checks, and diagnostic exports.",
   };
 
   const CONNECTION_LABELS = {
@@ -552,8 +556,15 @@
           <div class="sidebar-footer">
             <div class="footer-row"><span>Vault</span><strong>${status.vault.unlocked ? "unlocked" : "locked"}</strong></div>
             <div class="footer-row"><span>Agents</span><strong>${status.emergency_disabled ? "stopped" : "enabled"}</strong></div>
+            <div class="footer-row"><span>Health</span><strong>${status.counts?.healthy_connections || 0}/${status.counts?.connections || 0} ok</strong></div>
             <div class="footer-row"><span>Ingress</span><span class="mono">:${esc(status.listeners.ingress_port)}</span></div>
-            <div class="footer-row"><span>Agent API</span><span class="mono">:${esc(status.listeners.agent_port)}${status.listeners.agent_tls ? " · TLS" : ""}</span></div>
+            <div class="footer-row"><span>Agent API</span><span class="mono">:${esc(status.listeners.agent_port)}${status.listeners.agent_tls ? " \u00b7 TLS" : ""}</span></div>
+            <div class="footer-row"><a class="repo-link" href="https://github.com/sandro-defender/ha-mcp" target="_blank" rel="noreferrer">GitHub</a><a class="repo-link" href="https://github.com/sandro-defender/ha-mcp/blob/main/CHANGELOG.md" target="_blank" rel="noreferrer">Changelog</a></div>
+            <div class="theme-switcher" role="group" aria-label="Color theme">
+              <button type="button" data-theme-choice="system" aria-pressed="${(document.documentElement.dataset.theme || "system") === "system" ? "true" : "false"}">Auto</button>
+              <button type="button" data-theme-choice="light" aria-pressed="${document.documentElement.dataset.theme === "light" ? "true" : "false"}">Light</button>
+              <button type="button" data-theme-choice="dark" aria-pressed="${document.documentElement.dataset.theme === "dark" ? "true" : "false"}">Dark</button>
+            </div>
           </div>
         </aside>
         <main class="main" id="main-content" tabindex="-1">
@@ -580,6 +591,12 @@
       button.addEventListener("click", () => navigate(button.dataset.route));
     });
     $("#refresh").addEventListener("click", () => loadRoute(state.route, { focus: false }));
+    $$("[data-theme-choice]").forEach((button) => {
+      button.addEventListener("click", () => applyTheme(button.dataset.themeChoice));
+    });
+    $$("[data-go-section]").forEach((button) => {
+      button.addEventListener("click", () => navigate(button.dataset.goSection));
+    });
   }
 
   function setUpdated() {
@@ -613,10 +630,12 @@
       if (route === "dashboard") await viewDashboard();
       else if (route === "connections") await viewConnections();
       else if (route === "credentials") await viewCredentials();
+      else if (route === "agents") await viewAgents();
       else if (route === "tools") await viewTools();
       else if (route === "permissions") await viewPermissions();
       else if (route === "approvals") await viewApprovals();
       else if (route === "audit") await viewAudit();
+      else if (route === "updates") await viewUpdates();
       else if (route === "settings") await viewSettings();
     } catch (error) {
       if (error instanceof ApiError && (error.status === 423 || error.code === "vault_locked")) {
@@ -655,7 +674,20 @@
         <p class="metric-note">${note}</p>
       </div>`;
 
-    $("#section").innerHTML = `
+    var release = status.release || {};
+    var warnings = status.warnings || [];
+    var banner = "";
+    if (release.post_update_notice && release.post_update_notice.show) {
+      var n = release.post_update_notice;
+      var h = (n.highlights||[]).map(function(x){ return '<li>' + esc(x) + '</li>'; }).join("");
+      var m = (n.migration_notes||[]).map(function(x){ return '<li>' + esc(x) + '</li>'; }).join("");
+      banner = '<div class="update-banner" role="status"><h3>' + icon("refresh",16) + ' What\'s New in v' + esc(n.version) + ' — restart complete</h3>' + (h ? '<ul class="release-bullets">' + h + '</ul>' : "") + (m ? '<div class="notice mt-2"><div><strong>Migration Notes</strong><ul class="release-bullets">' + m + '</ul></div></div>' : "") + '<div class="button-row mt-2"><button type="button" class="button" data-size="sm" id="dismiss-banner">' + icon("check",14) + '<span>Dismiss</span></button><button type="button" class="button" data-size="sm" data-go="updates">View changelog</button></div></div>';
+    }
+    var warningsBlock = "";
+    if (warnings.length) {
+      warningsBlock = '<section class="card glass" aria-labelledby="warnings-title"><div class="card-header"><h3 id="warnings-title">Active warnings (' + warnings.length + ')</h3>' + badge("review", warnings.some(function(w){ return w.severity==="critical"; })?"danger":"warn") + '</div><div class="warning-stack">' + warnings.map(warningCard).join("") + '</div></section>';
+    }
+    $("#section").innerHTML = banner + warningsBlock + `
       <div class="grid grid-4">
         ${metric(
           "Enabled agents",
@@ -767,6 +799,8 @@
       })
     );
     $("#toggle-agents").addEventListener("click", toggleAgents);
+    var dismissBtn = document.getElementById("dismiss-banner");
+    if (dismissBtn) dismissBtn.addEventListener("click", function(){ guarded(async function(){ await api("releases/acknowledge", {method:"POST", body:{}}); toast("Notice dismissed."); await navigate("dashboard"); }); });
     $$("[data-go]").forEach((node) =>
       node.addEventListener("click", (event) => {
         event.preventDefault();
@@ -979,6 +1013,16 @@
              logs: ${esc((config.allowed_log_paths || []).join(", ") || "none")}
            </p>`
         : `<div class="mono">${esc(config.base_url)}</div>`;
+    var diag = connection.last_check_detail || {};
+    var steps = Array.isArray(diag.steps) ? diag.steps : [];
+    var latency = diag.latency_ms ?? connection.latency_ms ?? diag.duration_ms ?? null;
+    var latencyBadge = "";
+    if (latency !== null && latency !== undefined) {
+      var tone = latency < 500 ? "ok" : latency < 1500 ? "warn" : "danger";
+      latencyBadge = badge(String(latency) + " ms", tone);
+    }
+    var category = diag.error_category || diag.category || "";
+    var remediation = diag.remediation || diag.hint || "";
     return `
       <div class="list-item">
         <div class="list-item-top">
@@ -987,6 +1031,7 @@
             ${esc(connection.name)}
             ${badge(CONNECTION_LABELS[connection.type] || connection.type, "info")}
             ${statusBadge(connection.status)}
+            ${latencyBadge}
           </span>
           <div class="button-row">
             <button type="button" class="button" data-size="sm" data-test="${esc(connection.id)}">
@@ -1005,9 +1050,13 @@
           </div>
         </div>
         ${detail}
+        ${connection.last_ok_at ? '<p class="list-item-meta">Last healthy: ' + esc(fmtDate(connection.last_ok_at)) + ' · ' + esc(relTime(connection.last_ok_at)) + '</p>' : ""}
+        ${steps.length ? '<div class="diag-steps mt-2">' + steps.map(diagStepRow).join("") + '</div>' : ""}
+        ${category ? '<p class="field-hint mt-1">Error: ' + esc(category) + (remediation ? ' — ' + esc(remediation) : "") + '</p>' : ""}
         <div class="button-row">
           <span class="list-item-meta">
             ${connection.last_check_at ? `Last tested ${fmtDate(connection.last_check_at)} — ${esc(connection.last_check_message || "")}` : "Never tested"}
+            ${connection.host_key_trusted===false ? ' · ' + badge("host key untrusted","danger") : connection.host_key_trusted===true ? ' · ' + badge("host key trusted","ok") : ""}
           </span>
           <div class="danger-zone">
             <button type="button" class="button" data-size="sm" data-variant="danger" data-delete="${esc(connection.id)}">
@@ -1751,6 +1800,31 @@
     $$("[data-delete-agent]", $("#section")).forEach((button) =>
       button.addEventListener("click", () => deleteAgent(button.dataset.deleteAgent))
     );
+
+    var simBlock = document.createElement("section");
+    simBlock.className = "card glass mt-4";
+    var agentOptions = state.agents.map(function(a){ return '<option value="' + esc(a.id) + '">' + esc(a.name) + ' — ' + esc(a.token_prefix||"") + '</option>'; }).join("");
+    var connOptions = state.connections.map(function(c){ return '<option value="' + esc(c.id) + '">' + esc(c.name) + ' — ' + esc(c.type) + '</option>'; }).join("") || '<option value="">No connections</option>';
+    simBlock.innerHTML = "<div class=\"card-header\"><h3>Policy Simulator</h3><span class=\"card-hint\">dry-run an operation before live execution</span></div><form class=\"form\" id=\"sim-form\" novalidate><div class=\"form-row\"><div class=\"field\"><label for=\"sim-agent\">Agent</label><select id=\"sim-agent\">" + agentOptions + "</select></div><div class=\"field\"><label for=\"sim-connection\">Connection</label><select id=\"sim-connection\">" + connOptions + "</select></div></div><div class=\"form-row\"><div class=\"field\"><label for=\"sim-tool\">Tool</label><input id=\"sim-tool\" required placeholder=\"ha.get_state\" autocomplete=\"off\"></div><div class=\"field\"><label for=\"sim-params\">Parameters (JSON)</label><textarea id=\"sim-params\" data-code=\"true\" spellcheck=\"false\" placeholder='{&quot;entity_id&quot;:&quot;light.kitchen&quot;}'>{\"entity_id\":\"light.kitchen\"}</textarea></div></div><div class=\"button-row\"><button type=\"submit\" class=\"button\" data-variant=\"primary\" id=\"sim-run\">" + icon("check",16) + "<span>Evaluate</span></button></div></form><div id=\"sim-result\" class=\"mt-3\" aria-live=\"polite\"></div><p class=\"field-hint mt-2\">Calls <span class=\"code-hint\">POST /api/admin/policies/evaluate</span> with real scope, group, and policy evaluation. No side effects.</p>";
+    $("#section").appendChild(simBlock);
+    if (!state.connections.length) {
+      api("connections").then(function(d){ state.connections=d.items||[]; }).catch(function(){});
+    }
+    document.getElementById("sim-form").addEventListener("submit", async function(e){
+      e.preventDefault();
+      var btn=document.getElementById("sim-run");
+      await withBusy(btn, function(){ return guarded(async function(){
+        var agentId=document.getElementById("sim-agent").value;
+        var connectionId=document.getElementById("sim-connection").value;
+        var tool=document.getElementById("sim-tool").value.trim();
+        var params={};
+        try { var raw=document.getElementById("sim-params").value.trim(); if(raw) params=JSON.parse(raw); } catch { toast("Parameters must be valid JSON.", "danger"); return; }
+        var result=await api("policies/evaluate", {method:"POST", body:{agent_id:agentId, tool:tool, connection_id:connectionId, params:params}});
+        var tone = result.decision==="allow_immediate" ? "ok" : result.decision==="require_approval" ? "warn" : "danger";
+        var checks = (result.checks||[]).map(function(c){ return '<div class="diag-step"><span>' + esc(c.detail||c.check) + '</span>' + badge(c.ok?"ok":"fail", c.ok?"ok":"danger") + '</div>'; }).join("");
+        document.getElementById("sim-result").innerHTML='<div class="notice" data-tone="' + tone + '">' + icon(tone==="ok"?"check":"alert",18) + '<div><strong>' + esc(result.decision) + ' — ' + esc(result.reason) + '</strong>' + (result.require_approval?'<p class="card-hint">Approval required before execution.</p>':"") + '</div></div><div class="diag-steps mt-3">' + checks + '</div><div class="detail-list mt-3"><div class="detail-row"><dt>Policy revision</dt><dd class="mono">' + esc(result.policy_revision||"") + '</dd></div><div class="detail-row"><dt>Limits</dt><dd class="mono">' + esc(String(result.limits && result.limits.timeout_seconds||"")) + 's · ' + esc(String(result.limits && result.limits.max_output_bytes||"")) + 'B</dd></div></div><pre class="pre mt-2">' + esc(JSON.stringify(result,null,2)) + '</pre>';
+      }); });
+    });
   }
 
   function agentItem(agent) {
@@ -2339,6 +2413,27 @@
         </section>
       </div>
 
+      <section class="card glass mt-4" aria-labelledby="diag-title">
+        <div class="card-header"><h3 id="diag-title">Diagnostics &amp; Health</h3><span class="card-hint">redacted bundle — zero secrets</span></div>
+        <div class="grid grid-2">
+          <div>
+            <h4>Readiness</h4>
+            <div id="readiness-box" class="pre" aria-live="polite">Loading…</div>
+            <div class="button-row mt-2">
+              <button type="button" class="button" data-size="sm" id="refresh-readiness">${icon("refresh",14)}<span>Refresh</span></button><a class="button" data-size="sm" href="api/admin/readiness" target="_blank" rel="noreferrer">Open JSON</a>
+            </div>
+          </div>
+          <div>
+            <h4>Diagnostic bundle</h4>
+            <p class="field-hint">Exports schema version, counts, connection health, recent warnings, and recent audit — all recursive secrets redacted.</p>
+            <pre class="pre" id="diag-preview">Loading…</pre>
+            <div class="button-row mt-2">
+              <button type="button" class="button" data-size="sm" data-variant="primary" id="diag-export">${icon("copy",14)}<span>Download gateway-diagnostics-redacted.json</span></button><button type="button" class="button" data-size="sm" id="diag-refresh">${icon("refresh",14)}<span>Refresh preview</span></button>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section class="card glass mt-4" aria-labelledby="endpoints-title">
         <h3 id="endpoints-title">Network and endpoints</h3>
         <dl class="detail-list">
@@ -2382,6 +2477,42 @@
       })
     );
 
+    var loadReadiness = async function(){
+      try {
+        var r = await api("readiness");
+        var readinessBox = document.getElementById("readiness-box");
+        if (readinessBox) readinessBox.textContent = JSON.stringify(r, null, 2);
+      } catch (e) { var readinessBox2 = document.getElementById("readiness-box"); if (readinessBox2) readinessBox2.textContent = errorText(e); }
+    };
+    var loadDiag = async function(){
+      try {
+        var d = await api("diagnostics");
+        var diagPreview = document.getElementById("diag-preview");
+        if (diagPreview) diagPreview.textContent = JSON.stringify(d, null, 2).slice(0, 4000);
+      } catch (e) { var diagPreview2 = document.getElementById("diag-preview"); if (diagPreview2) diagPreview2.textContent = errorText(e); }
+    };
+    loadReadiness();
+    loadDiag();
+    var refreshReadinessBtn = document.getElementById("refresh-readiness");
+    if (refreshReadinessBtn) refreshReadinessBtn.addEventListener("click", loadReadiness);
+    var diagRefreshBtn = document.getElementById("diag-refresh");
+    if (diagRefreshBtn) diagRefreshBtn.addEventListener("click", loadDiag);
+    var diagExportBtn = document.getElementById("diag-export");
+    if (diagExportBtn) diagExportBtn.addEventListener("click", async function(){
+      await guarded(async function(){
+        var resp = await fetch("api/admin/diagnostics/export", {headers:{"X-Gateway-Request":"1"}, credentials:"same-origin"});
+        if(!resp.ok) throw new ApiError("Export failed", {status:resp.status});
+        var blob = await resp.blob();
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement("a");
+        a.href=url; a.download="gateway-diagnostics-redacted.json";
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function(){ URL.revokeObjectURL(url); },3000);
+        toast("Diagnostics bundle downloaded.");
+      });
+    });
+
+
     const limitsForm = $("#limits-form");
     attachBlurValidation(limitsForm);
     limitsForm.addEventListener("submit", (event) => {
@@ -2400,6 +2531,150 @@
       event.preventDefault();
       rotateKey(rotateForm);
     });
+  }
+
+
+  function tokenTone(status) {
+    if (status === "active") return "ok";
+    if (status === "expiring_soon") return "warn";
+    if (status === "expired" || status === "revoked") return "danger";
+    return "";
+  }
+
+  function warningCard(w) {
+    return '<div class="warning-item" data-severity="' + esc(w.severity) + '"><div><strong>' + esc(w.title) + '</strong><p class="card-hint">' + esc(w.message) + '</p></div><button type="button" class="button" data-size="sm" data-go-section="' + esc(w.section) + '">' + esc(w.action_label || "View") + '</button></div>';
+  }
+
+  function releaseSectionBlocks(sections) {
+    if (!sections || !Object.keys(sections).length) return '<p class="card-hint">No additional details.</p>';
+    var out = "";
+    for (var k in sections) {
+      var bullets = sections[k];
+      if (!bullets || !bullets.length) continue;
+      if (k.toLowerCase() === "unreleased") continue;
+      out += '<p class="release-section-title">' + esc(k) + '</p><ul class="release-bullets">' + bullets.map(function(b){ return '<li>' + esc(b) + '</li>'; }).join("") + '</ul>';
+    }
+    return out;
+  }
+
+  function diagStepRow(step) {
+    var tone = step.status === "ok" ? "ok" : step.status === "skipped" ? "warn" : "danger";
+    var label = step.label || step.step || step.name || "step";
+    return '<div class="diag-step"><span>' + esc(label) + '</span>' + badge(step.status || "unknown", tone) + '</div>';
+  }
+
+  function applyTheme(theme) {
+    var allowed = {system:1, light:1, dark:1};
+    var choice = allowed[theme] ? theme : "system";
+    if (choice === "system") document.documentElement.removeAttribute("data-theme");
+    else document.documentElement.setAttribute("data-theme", choice);
+    document.querySelectorAll("[data-theme-choice]").forEach(function(b){
+      b.setAttribute("aria-pressed", String(b.dataset.themeChoice === choice));
+    });
+  }
+
+  function initTheme() {
+    if (document.documentElement.dataset.theme) applyTheme(document.documentElement.dataset.theme);
+  }
+
+  /* --------------------------------------------------------------- agents */
+
+  async function viewAgents() {
+    var data = await api("agents");
+    var agents = data.items || [];
+    var enriched = agents;
+    try {
+      var diag = await api("diagnostics");
+      if (diag && diag.agents) enriched = diag.agents;
+    } catch {}
+
+    $("#section").innerHTML = '<section class="card glass" aria-labelledby="create-agent-title"><div class="card-header"><h3 id="create-agent-title">Create agent identity</h3>' + badge("token shown once", "warn") + '</div><form class="form" id="agent-form" novalidate><div class="form-row"><div class="field"><label for="agent-name">Name</label><input id="agent-name" required maxlength="64" autocomplete="off" placeholder="windows-claude-agent"></div><div class="field"><label for="agent-expiry">Expiry (optional)</label><input id="agent-expiry" type="datetime-local"><p class="field-hint">Rotation is still recommended even without an expiry.</p></div></div><div class="field"><label for="agent-description">Description</label><input id="agent-description" maxlength="500" autocomplete="off" placeholder="Owner, purpose, ticket"><p class="field-hint">Visible to reviewers when approving requests.</p></div><fieldset class="field plain-fieldset"><legend class="field-label mb-2">Scopes</legend><div class="chip-row" id="agent-scopes">' + ((state.scopes && state.scopes.length ? state.scopes : [{id:"ha.read"},{id:"ha.write"},{id:"proxmox.read"},{id:"ssh.read"},{id:"ssh.execute"}]).map(function(s){ return '<label class="chip" data-selected="false"><input type="checkbox" value="' + esc(s.id) + '"><span>' + esc(s.id) + '</span></label>'; }).join("")) + '</div><p class="field-error" id="agent-scopes-error"></p></fieldset><div class="field"><label for="agent-template">Initial policy</label><select id="agent-template"><option value="deny">Deny all (configure later)</option><option value="home_assistant_read_all">Home Assistant read-only</option><option value="proxmox_read_all">Proxmox read-only</option><option value="ssh_read">SSH read-only</option></select></div><div class="button-row"><button type="submit" class="button" data-variant="primary" id="create-agent-btn">' + icon("plus", 16) + '<span>Create agent</span></button></div></form></section><div class="list mt-4">' + (enriched.length ? enriched.map(agentCard).join("") : emptyState("No agent identities","Create a separate, revocable token for each agent. Never share tokens between agents.","shield")) + '</div>';
+
+    try {
+      var scopeData = await api("scopes");
+      var templateData = await api("policy-templates");
+      state.scopes = scopeData.scopes || scopeData.items || state.scopes;
+      state.templates = templateData.templates || state.templates;
+    } catch {}
+
+    $$("#agent-scopes .chip").forEach(function(chip){
+      var input=$("input",chip);
+      var sync=function(){ chip.dataset.selected=String(input.checked); };
+      chip.addEventListener("click", function(e){ if(e.target!==input){ input.checked=!input.checked; sync(); }});
+      input.addEventListener("change", sync);
+    });
+
+    var form=$("#agent-form");
+    attachBlurValidation(form);
+    form.addEventListener("submit", function(e){ e.preventDefault(); createAgentFromAgentsPage(form); });
+
+    $$("[data-policy]", $("#section")).forEach(function(b){ b.addEventListener("click", function(){ openPolicyEditor(b.dataset.policy); }); });
+    $$("[data-rotate-token]", $("#section")).forEach(function(b){ b.addEventListener("click", function(){ rotateAgent(b.dataset.rotateToken); }); });
+    $$("[data-revoke]", $("#section")).forEach(function(b){ b.addEventListener("click", function(){ revokeAgent(b.dataset.revoke); }); });
+    $$("[data-delete-agent]", $("#section")).forEach(function(b){ b.addEventListener("click", function(){ deleteAgent(b.dataset.deleteAgent); }); });
+    $$("[data-audit-filter]", $("#section")).forEach(function(b){ b.addEventListener("click", function(){ navigate("audit"); }); });
+  }
+
+  function agentCard(agent) {
+    var usage = agent.usage || {};
+    var allowed = agent.allowed_tools || [];
+    var denied = agent.denied_tools || [];
+    var tokenStatus = agent.token_status || (agent.enabled ? "active" : "revoked");
+    var chipsAllowed = allowed.map(function(t){ return '<span class="chip" data-selected="true">' + esc(t) + '</span>'; }).join("");
+    var chipsDenied = denied.map(function(t){ return '<span class="chip" data-tone="muted">' + esc(t) + '</span>'; }).join("");
+    var scopesChips = (agent.scopes||[]).map(function(s){ return '<span class="chip">' + esc(s) + '</span>'; }).join("");
+    return '<div class="list-item"><div class="list-item-top"><span class="list-item-title">' + icon("shield", 16) + esc(agent.name) + ' ' + (agent.enabled ? badge("enabled", "ok") : badge("revoked", "danger")) + ' ' + badge(tokenStatus, tokenTone(tokenStatus)) + ' ' + badge(String(agent.policy_rules ?? agent.rule_count ?? 0) + ' policy rules', "info") + '</span><div class="button-row"><button type="button" class="button" data-size="sm" data-policy="' + esc(agent.id) + '">' + icon("settings", 14) + '<span>Policy</span></button><button type="button" class="button" data-size="sm" data-rotate-token="' + esc(agent.id) + '">' + icon("rotate", 14) + '<span>Rotate token</span></button></div></div>' + (agent.description || agent.notes ? '<p class="card-hint">' + esc(agent.description || agent.notes) + '</p>' : "") + '<div class="chip-row">' + scopesChips + '</div>' + (allowed.length || denied.length ? '<div class="chip-row mt-2">' + chipsAllowed + chipsDenied + '</div>' : "") + '<div class="detail-list mt-2"><div class="detail-row"><dt>Token</dt><dd class="mono">' + esc(agent.token_prefix||"—") + ' · ' + esc(tokenStatus) + (agent.expires_at ? ' · expires ' + esc(fmtDate(agent.expires_at)) : "") + '</dd></div><div class="detail-row"><dt>Last used</dt><dd>' + (agent.last_used_at ? esc(relTime(agent.last_used_at)) : "never") + ' · created ' + esc(fmtDate(agent.created_at)) + '</dd></div><div class="detail-row"><dt>Usage</dt><dd>' + esc(usage.total_requests ?? 0) + ' total · ' + esc(usage.succeeded_count ?? 0) + ' ok · ' + esc(usage.denied_count ?? 0) + ' denied · ' + esc(usage.rate_limited_count ?? 0) + ' throttled</dd></div>' + (agent.last_rotated_at ? '<div class="detail-row"><dt>Last rotated</dt><dd>' + esc(fmtDate(agent.last_rotated_at)) + '</dd></div>' : "") + '</div><div class="button-row mt-2"><span class="list-item-meta">id ' + esc(String(agent.id).slice(0,12)) + ' · prefix ' + esc(agent.token_prefix||"—") + '</span><div class="button-row"><button type="button" class="button" data-size="sm" data-audit-filter="' + esc(agent.id) + '">' + icon("audit",14) + '<span>Audit</span></button><div class="danger-zone"><button type="button" class="button" data-size="sm" data-variant="danger" data-revoke="' + esc(agent.id) + '" ' + (agent.enabled?"":"disabled") + '>' + icon("close",14) + '<span>Revoke</span></button><button type="button" class="button" data-size="sm" data-variant="danger" data-delete-agent="' + esc(agent.id) + '">' + icon("trash",14) + '<span>Delete</span></button></div></div></div></div>';
+  }
+
+  async function createAgentFromAgentsPage(form) {
+    clearErrors(form);
+    var name=$("#agent-name").value.trim();
+    var scopes=$$("#agent-scopes input:checked").map(function(i){ return i.value; });
+    var errors=[];
+    if(!name) errors.push({fieldId:"agent-name", message:"Enter an agent name."});
+    if(!scopes.length) errors.push({fieldId:"agent-scopes", message:"Select at least one scope."});
+    if(errors.length){ showErrors(form,"The agent was not created.",errors); return; }
+    var templateKey=$("#agent-template").value;
+    var policy={version:1,rules:[]};
+    if(templateKey!=="deny" && state.templates && state.templates[templateKey]) policy=state.templates[templateKey];
+    var expiry=$("#agent-expiry").value;
+    var descEl = $("#agent-description");
+    var body={name:name, scopes:scopes, notes:(descEl ? descEl.value.trim() : ""), description:(descEl ? descEl.value.trim() : ""), policy:policy};
+    if(expiry) body.expires_at=new Date(expiry).toISOString();
+    await withBusy($("#create-agent-btn"), function(){ return guarded(async function(){
+      var result=await api("agents",{method:"POST", body:body});
+      await navigate("agents");
+      showToken(result.token, result.agent.name);
+    }); }).catch(function(e){ showErrors(form,"The agent was not created.",[{message:errorText(e)}]); });
+  }
+
+  /* -------------------------------------------------------------- updates */
+
+  async function viewUpdates() {
+    var data = await api("releases");
+    var cur = data.current_release;
+    var releases = data.releases || [];
+    var notice = data.post_update_notice;
+    var links = data.links || {};
+    var bannerHtml = "";
+    if (notice && notice.show) {
+      var highlights = (notice.highlights||[]).map(function(h){ return '<li>' + esc(h) + '</li>'; }).join("");
+      var migrations = (notice.migration_notes||[]).map(function(m){ return '<li>' + esc(m) + '</li>'; }).join("");
+      bannerHtml = '<div class="update-banner" role="status"><h3>' + icon("refresh",18) + ' What\'s New in v' + esc(notice.version) + (notice.previous_version ? ' (from v' + esc(notice.previous_version) + ')' : "") + '</h3>' + (notice.date ? '<p class="card-hint">Released ' + esc(notice.date) + '</p>' : "") + (highlights ? '<ul class="release-bullets">' + highlights + '</ul>' : "") + (migrations ? '<div class="notice mt-2"><div><strong>Migration Notes</strong><ul class="release-bullets">' + migrations + '</ul></div></div>' : "") + (notice.breaking ? '<div class="notice mt-2" data-tone="danger"><div><strong>Breaking Changes</strong> Review the changelog before upgrading dependent agents.</div></div>' : "") + '<div class="button-row mt-3"><button type="button" class="button" data-variant="primary" id="ack-release">' + icon("check",14) + '<span>Dismiss notice</span></button><a class="button" data-variant="ghost" href="' + esc(links.changelog||"") + '" target="_blank" rel="noreferrer">' + icon("audit",14) + '<span>Open CHANGELOG.md</span></a></div></div>';
+    }
+    var curBlock = "";
+    if (cur) curBlock = '<div class="notice" data-tone="ok"><div><strong>Current: v' + esc(cur.version) + (cur.date ? ' — ' + esc(cur.date) : "") + '</strong>' + releaseSectionBlocks(cur.sections) + '</div></div>';
+    var releasesHtml = releases.map(function(rel){
+      var summary = (rel.highlights && rel.highlights.length ? esc(rel.highlights[0].slice(0,80)) : "");
+      return '<details class="list-item" ' + (rel.version===data.installed_version?"open":"") + '><summary class="list-item-top" data-role="summary-action"><span class="list-item-title">v' + esc(rel.version) + (rel.date?' — ' + esc(rel.date):"") + ' ' + (rel.is_current?badge("current","ok"):"") + '</span><span class="list-item-meta">' + (rel.breaking?badge("breaking","danger"):"") + summary + '</span></summary>' + releaseSectionBlocks(rel.sections) + '<div class="button-row mt-2"><a class="button" data-size="sm" href="' + esc(rel.release_url||"") + '" target="_blank" rel="noreferrer">View release</a></div></details>';
+    }).join("");
+    var linksHtml = Object.entries(links).map(function(kv){ return '<div class="detail-row"><dt>' + esc(kv[0]) + '</dt><dd><a class="mono" href="' + esc(kv[1]) + '" target="_blank" rel="noreferrer">' + esc(kv[1]) + '</a></dd></div>'; }).join("");
+    $("#section").innerHTML = bannerHtml + '<div class="grid grid-2"><section class="card glass"><div class="card-header"><h3>Installed version</h3>' + (data.update_available ? badge("update available","warn") : badge("up to date","ok")) + '</div><p class="metric">v' + esc(data.installed_version) + '</p><p class="card-hint">Installed ' + (data.installed_at ? esc(fmtDate(data.installed_at)) : "unknown") + ' · schema v' + esc(String(data.schema && data.schema.version || "—")) + '</p><dl class="detail-list mt-3"><div class="detail-row"><dt>Previous version</dt><dd>' + (data.previous_version ? 'v' + esc(data.previous_version) : "—") + '</dd></div><div class="detail-row"><dt>Latest known</dt><dd>v' + esc(data.latest_version) + ' · ' + esc(data.check_status||"local_only") + '</dd></div><div class="detail-row"><dt>Checked</dt><dd>' + (data.checked_at ? esc(fmtDate(data.checked_at)) : "never") + ' · ' + esc(data.check_message||"") + '</dd></div></dl><div class="button-row mt-3"><button type="button" class="button" data-variant="primary" id="check-updates">' + icon("refresh",14) + '<span>Check for updates</span></button><a class="button" href="' + esc(links.releases||"") + '" target="_blank" rel="noreferrer">GitHub Releases</a><a class="button" href="' + esc(links.repository||"") + '" target="_blank" rel="noreferrer">Repository</a></div></section><section class="card glass"><h3>Repository links</h3><div class="list mt-3">' + linksHtml + '</div><p class="field-hint mt-3">Release checks contact GitHub only when you click “Check for updates” and are cached for 1 hour.</p></section></div><section class="card glass mt-4" aria-labelledby="history-title"><div class="card-header"><h3 id="history-title">Release history</h3><span class="card-hint">local CHANGELOG.md · structured Keep-a-Changelog</span></div>' + curBlock + '<div class="release-stack mt-4">' + releasesHtml + '</div></section>';
+
+    var checkBtn = document.getElementById("check-updates");
+    if (checkBtn) checkBtn.addEventListener("click", function(e){ withBusy(e.currentTarget, function(){ return guarded(async function(){ var fresh=await api("releases/check",{method:"POST", body:{}}); toast(fresh.update_available ? 'Update available: v' + fresh.latest_version : "You are on the latest release."); await navigate("updates"); }); }); });
+    var ackBtn = document.getElementById("ack-release");
+    if (ackBtn) ackBtn.addEventListener("click", function(){ guarded(async function(){ await api("releases/acknowledge",{method:"POST", body:{}}); toast("Post-update notice dismissed."); await navigate("updates"); }); });
   }
 
   async function saveLimits(form, limits) {
@@ -2782,6 +3057,7 @@
       return;
     }
     if (!NAV.some(([id]) => id === state.route)) state.route = "dashboard";
+    initTheme();
     mountShell();
     await loadRoute(state.route, { focus: false });
   }

@@ -463,10 +463,17 @@ class ToolRegistry:
         groups = self.settings.get("enabled_tool_groups")
         return {str(group) for group in groups} if isinstance(groups, list) else set()
 
-    def get(self, name: str) -> ToolSpec:
+    def is_group_enabled(self, group: str) -> bool:
+        return group in self.enabled_groups()
+
+    def get_spec(self, name: str) -> ToolSpec:
         spec = self._specs.get(name)
         if spec is None:
             raise NotFoundError("tool")
+        return spec
+
+    def get(self, name: str) -> ToolSpec:
+        spec = self.get_spec(name)
         if spec.group not in self.enabled_groups():
             raise ToolUnavailable(f"tool group {spec.group} is disabled")
         return spec

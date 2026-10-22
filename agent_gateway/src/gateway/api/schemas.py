@@ -95,6 +95,22 @@ class SettingsUpdateRequest(StrictRequest):
     approval_ttl_seconds: int | None = Field(default=None, ge=30, le=3600)
     max_operation_timeout_seconds: int | None = Field(default=None, ge=5, le=120)
     max_output_bytes: int | None = Field(default=None, ge=1024, le=1_048_576)
+    ui_theme: Literal["system", "light", "dark"] | None = None
+
+
+class PolicySimulationRequest(StrictRequest):
+    agent_id: str = Field(min_length=1, max_length=64)
+    tool: str = Field(min_length=3, max_length=100)
+    connection_id: str = Field(min_length=1, max_length=64)
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReleaseCheckRequest(StrictRequest):
+    force: bool = False
+
+
+class ReleaseAcknowledgeRequest(StrictRequest):
+    version: str | None = Field(default=None, max_length=32)
 
 
 class OperationRequest(StrictRequest):

@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 220" width="960" height="220" role="img" aria-label="Home Assistant Agent Gateway Banner">
+  <defs>
+    <linearGradient id="heroBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#091322"/>
+      <stop offset="50%" stop-color="#0F223A"/>
+      <stop offset="100%" stop-color="#0A1628"/>
+    </linearGradient>
+    <linearGradient id="heroShield" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#0284C7"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="956" height="216" rx="20" fill="url(#heroBg)" stroke="#1E3A5F" stroke-width="2"/>
+  <!-- Grid accent -->
+  <g stroke="#1E293B" stroke-width="1" opacity="0.55">
+    <line x1="0" y1="55" x2="960" y2="55"/>
+    <line x1="0" y1="110" x2="960" y2="110"/>
+    <line x1="0" y1="165" x2="960" y2="165"/>
+    <line x1="220" y1="0" x2="220" y2="220"/>
+    <line x1="680" y1="0" x2="680" y2="220"/>
+  </g>
+
+  <!-- Brand Emblem -->
+  <g transform="translate(46, 38)">
+    <rect x="6" y="6" width="132" height="132" rx="28" fill="#0B192C" stroke="#38BDF8" stroke-width="3" stroke-opacity="0.7"/>
+    <path d="M72 26 L112 42 V74 C112 99 94.5 117.5 72 126 C49.5 117.5 32 99 32 74 V42 Z"
+          fill="#0B1324" stroke="url(#heroShield)" stroke-width="4.5" stroke-linejoin="round"/>
+    <rect x="57" y="66" width="30" height="25" rx="6" fill="url(#heroShield)"/>
+    <path d="M63 66 V58 C63 53 67 49 72 49 C77 49 81 53 81 58 V66"
+          fill="none" stroke="#BAE6FD" stroke-width="4.5" stroke-linecap="round"/>
+    <circle cx="72" cy="76" r="3.5" fill="#081120"/>
+    <path d="M72 79.5 V85" stroke="#081120" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="96" cy="98" r="14" fill="#4ADE80" stroke="#0B192C" stroke-width="3.5"/>
+    <path d="M90 98 L94.2 102.2 L102.5 93.8" fill="none" stroke="#052E16" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Title and Subtitle -->
+  <text x="210" y="60" fill="#38BDF8" font-family="DejaVu Sans, system-ui, sans-serif" font-size="12" font-weight="700" letter-spacing="1.4">HOME ASSISTANT OS APP / ADD-ON · SECURITY BOUNDARY FOR AI AGENTS</text>
+  <text x="210" y="104" fill="#F8FAFC" font-family="DejaVu Sans, system-ui, sans-serif" font-size="33" font-weight="700">Home Assistant Agent Gateway</text>
+  <text x="210" y="136" fill="#94A3B8" font-family="DejaVu Sans, system-ui, sans-serif" font-size="14">Deny-by-default policies, single-use human approvals, AES-256-GCM vault, and MCP HTTP.</text>
+
+  <!-- Capability Pills -->
+  <g transform="translate(210, 158)" font-family="DejaVu Sans, system-ui, sans-serif" font-size="11.5" font-weight="600">
+    <rect x="0" y="0" width="136" height="30" rx="15" fill="#0F2942" stroke="#0284C7" stroke-width="1.5"/>
+    <text x="68" y="19.5" fill="#E0F2FE" text-anchor="middle">Ingress UI :8099</text>
+
+    <rect x="148" y="0" width="166" height="30" rx="15" fill="#0F2942" stroke="#0284C7" stroke-width="1.5"/>
+    <text x="231" y="19.5" fill="#E0F2FE" text-anchor="middle">MCP + REST API :8098</text>
+
+    <rect x="326" y="0" width="188" height="30" rx="15" fill="#0B2B22" stroke="#16A34A" stroke-width="1.5"/>
+    <text x="420" y="19.5" fill="#DCFCE7" text-anchor="middle">AES-256-GCM + Argon2id</text>
+
+    <rect x="526" y="0" width="194" height="30" rx="15" fill="#1E293B" stroke="#475569" stroke-width="1.5"/>
+    <text x="623" y="19.5" fill="#F1F5F9" text-anchor="middle">HA · Proxmox RO · Safe SSH</text>
+  </g>
+</svg>

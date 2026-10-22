@@ -20,7 +20,9 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from .connectors.ssh import has_trusted_host_key
 from .errors import ConflictError, NotFoundError, ValidationFailure
+from .redaction import redact_value
 from .storage.db import Database
 from .utils import CONNECTION_NAME_RE, iso, validate_absolute_path
 from .vault.manager import CredentialVault
@@ -196,7 +198,9 @@ class ConnectionRecord:
     credential_id: str | None
     status: str
     last_check_at: str | None
+    last_ok_at: str | None
     last_check_message: str | None
+    last_check_detail: dict[str, Any]
     created_at: str
     updated_at: str
 
@@ -216,7 +220,9 @@ class ResolvedConnection:
             "credential_id": self.record.credential_id,
             "status": self.record.status,
             "last_check_at": self.record.last_check_at,
+            "last_ok_at": self.record.last_ok_at,
             "last_check_message": self.record.last_check_message,
+            "last_check_detail": self.record.last_check_detail,
             "created_at": self.record.created_at,
             "updated_at": self.record.updated_at,
         }
@@ -231,6 +237,14 @@ class ConnectionService:
     # ------------------------------------------------------------- CRUD
 
     def _row(self, row: sqlite3.Row) -> ConnectionRecord:
+        keys = set(row.keys())
+        raw_detail = row["last_check_detail"] if "last_check_detail" in keys else "{}"
+        try:
+            parsed_detail = json.loads(raw_detail) if raw_detail else {}
+            if not isinstance(parsed_detail, dict):
+                parsed_detail = {}
+        except (TypeError, json.JSONDecodeError):
+            parsed_detail = {}
         return ConnectionRecord(
             id=row["id"],
             name=row["name"],
@@ -239,7 +253,9 @@ class ConnectionService:
             credential_id=row["credential_id"],
             status=row["status"],
             last_check_at=row["last_check_at"],
+            last_ok_at=row["last_ok_at"] if "last_ok_at" in keys else None,
             last_check_message=row["last_check_message"],
+            last_check_detail=parsed_detail,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -308,6 +324,11 @@ class ConnectionService:
         return [self._public(self._row(row)) for row in rows]
 
     def _public(self, record: ConnectionRecord) -> dict[str, Any]:
+        host_key_trusted: bool | None = None
+        if record.type == "ssh":
+            host = str(record.config.get("host") or "")
+            port = int(record.config.get("port") or 22)
+            host_key_trusted = has_trusted_host_key(self.known_hosts_path, host, port) if host else False
         return {
             "id": record.id,
             "name": record.name,
@@ -316,7 +337,10 @@ class ConnectionService:
             "credential_id": record.credential_id,
             "status": record.status,
             "last_check_at": record.last_check_at,
+            "last_ok_at": record.last_ok_at,
             "last_check_message": record.last_check_message,
+            "last_check_detail": record.last_check_detail,
+            "host_key_trusted": host_key_trusted,
             "created_at": record.created_at,
             "updated_at": record.updated_at,
         }
@@ -348,7 +372,8 @@ class ConnectionService:
         try:
             self.db.execute(
                 "UPDATE connections SET name=?, config=?, credential_id=?, status='unconfigured', "
-                "last_check_at=NULL, last_check_message=NULL, updated_at=? WHERE id=?",
+                "last_check_at=NULL, last_check_message=NULL, last_check_detail='{}', "
+                "updated_at=? WHERE id=?",
                 (new_name, json.dumps(new_config), new_credential, iso(), connection_id),
             )
         except sqlite3.IntegrityError as exc:
@@ -361,11 +386,29 @@ class ConnectionService:
         self._remove_known_host_entry_for(connection_id)
         logger.info("connection deleted id=%s", connection_id)
 
-    def set_status(self, connection_id: str, status: str, message: str) -> None:
-        self.db.execute(
-            "UPDATE connections SET status=?, last_check_at=?, last_check_message=? WHERE id=?",
-            (status, iso(), message[:300], connection_id),
-        )
+    def set_status(
+        self,
+        connection_id: str,
+        status: str,
+        message: str,
+        *,
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        now = iso()
+        safe_detail = redact_value(detail or {})
+        detail_json = json.dumps(safe_detail if isinstance(safe_detail, dict) else {})
+        if status == "ok":
+            self.db.execute(
+                "UPDATE connections SET status=?, last_check_at=?, last_ok_at=?, "
+                "last_check_message=?, last_check_detail=? WHERE id=?",
+                (status, now, now, message[:300], detail_json, connection_id),
+            )
+        else:
+            self.db.execute(
+                "UPDATE connections SET status=?, last_check_at=?, "
+                "last_check_message=?, last_check_detail=? WHERE id=?",
+                (status, now, message[:300], detail_json, connection_id),
+            )
 
     # -------------------------------------------------------- resolution
 

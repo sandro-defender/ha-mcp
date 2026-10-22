@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from ..audit.service import AuditService
 from ..auth.agents import AgentPrincipal, AgentService
 from ..auth.rate_limit import SlidingWindowLimiter
 from ..settings import Settings
@@ -191,7 +192,7 @@ class AdminGateMiddleware:
             await self.app(scope, receive, send)
             return
         path = scope.get("path", "")
-        if path == "/healthz":
+        if path in {"/healthz", "/readyz"}:
             await self.app(scope, receive, send)
             return
 
@@ -287,19 +288,21 @@ class AgentAuthMiddleware:
         settings_store: SettingsStore,
         settings: Settings,
         limiter: SlidingWindowLimiter,
+        audit: AuditService | None = None,
     ) -> None:
         self.app = app
         self.agents = agents
         self.settings_store = settings_store
         self.settings = settings
         self.limiter = limiter
+        self.audit = audit
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
         path = scope.get("path", "")
-        if path == "/healthz":
+        if path in {"/healthz", "/readyz"}:
             await self.app(scope, receive, send)
             return
 
@@ -376,6 +379,20 @@ class AgentAuthMiddleware:
         peer = client_ip(scope)
         allowed, retry_after = self.limiter.check_and_record(f"authfail:{peer}", limit=10, window_seconds=60)
         logger.warning("agent authentication failed from %s (%s)", peer, reason)
+        if self.audit is not None:
+            try:
+                self.audit.record(
+                    actor_type="peer",
+                    actor_id=peer,
+                    tool="auth.failed",
+                    decision="rate_limited" if not allowed else "deny",
+                    status="rate_limited" if not allowed else "denied",
+                    reason=reason,
+                    error_category="unauthenticated",
+                    request_id=str(_state(scope).get("request_id") or ""),
+                )
+            except Exception:
+                logger.debug("failed to record auth failure audit event")
         if not allowed:
             await _send_json(
                 send,
