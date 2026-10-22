@@ -1,0 +1,52 @@
+# Changelog
+
+All notable changes to **Home Assistant Agent Gateway** are documented in this file.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [0.2.0] - 2026-10-21
+
+### Added
+- **10-Section Home Assistant Ingress UI**: Redesigned operational workspace with dedicated sections for `Overview`, `Connections`, `Credentials`, `Agents`, `Tools`, `Permissions`, `Approvals`, `Audit Log`, `Updates and Changelog`, and `Settings and Diagnostics`.
+- **Light, Dark, and System Theme Selector**: Explicit theme preference persisted in gateway settings alongside automatic `prefers-color-scheme` support, WCAG AA contrast verification, and `prefers-reduced-motion` support.
+- **Dedicated Agents Management Section**: Per-agent identity management with descriptions, scoped permissions, tool allowlist/denylist chips, token expiration status (`active`, `expiring_soon`, `expired`, `revoked`), token rotation, immediate revocation, usage counters, denied/rate-limited request counts, and one-click activity filtering.
+- **Interactive Policy Simulator (`POST /api/admin/policies/evaluate`)**: Dry-run any combination of agent, tool, connection, and parameters to verify whether the gateway will allow immediately, require human approval, or deny (with rule and constraint attribution) before live execution.
+- **Rich Connection Diagnostics**: Latency tracking (`latency_ms`), multi-step verification breakdown (`configuration`, `credential`, `transport`, `authentication`, `verification`), structured error classification (`authentication_failed`, `permission_denied`, `tls_certificate_error`, `host_key_untrusted`, `network_unreachable`, `protocol_error`), actionable remediation guidance, and persistent `last_ok_at` health tracking.
+- **Updates, Release History, and Post-Update Notice**: Bundled Keep-a-Changelog parser (`GET /api/admin/releases`), cached on-demand GitHub release check (`POST /api/admin/releases/check`), and one-time post-update "What's New & Migration Notes" banner (`POST /api/admin/releases/acknowledge`).
+- **Readiness & Redacted Diagnostic Exports**: Added `GET /readyz`, `GET /api/admin/readiness`, `GET /api/admin/diagnostics`, and downloadable `GET /api/admin/diagnostics/export` (`gateway-diagnostics-redacted.json`) with recursive secret redaction verification.
+- **Proactive Security Warnings**: Real-time posture warnings for expiring or expired agent tokens, credentials older than 90 days since rotation, recent failed authentication attempts, rate-limited requests, and untrusted SSH host keys.
+- **Official Home Assistant OS App Assets & Documentation**: Added `agent_gateway/icon.png` (128×128), `agent_gateway/logo.png` (250×100), `agent_gateway/DOCS.md`, `agent_gateway/CHANGELOG.md`, `agent_gateway/translations/en.yaml`, and original vector branding (`logo.svg`, `favicon.svg`).
+
+### Changed
+- **Automatic SQLite Schema Migration (v1 → v2)**: Added automatic startup migration in `storage/db.py` to add `connections.last_ok_at`, `connections.last_check_detail`, and `agents.last_rotated_at` while preserving all existing records.
+- **Audit Log Failed-Auth Visibility**: `AgentAuthMiddleware` now records redacted `auth.failed` events (including rate-limit throttling) in the audit log for operator visibility.
+- **Release & Version Synchronization**: Synchronized Semantic Versioning across `agent_gateway/config.yaml`, `agent_gateway/pyproject.toml`, `agent_gateway/Dockerfile`, `agent_gateway/src/gateway/__init__.py`, `CHANGELOG.md`, and `agent_gateway/CHANGELOG.md` with automated CI enforcement.
+
+### Fixed
+- **TLS Handshake Error Classification**: `connectors/http.py` now distinguishes `ssl.SSLError` / certificate verification failures (`tls_verification_failed`) from generic TCP connection failures (`upstream_unreachable`) and distinguishes HTTP `403` permission errors from HTTP `401` authentication failures.
+
+### Security
+- Enforced recursive secret redaction on exported diagnostic bundles (`hag-diagnostics-v1`) and connection diagnostic details.
+- Preserved strict Content-Security-Policy (`default-src 'self'`, no inline styles or scripts) and zero browser storage (`localStorage`/`sessionStorage`/`cookies`) across all new UI views.
+
+### Migration Notes
+- Database schema migrates automatically from `v1` to `v2` at startup. No manual SQL or configuration changes are required.
+- Existing encrypted `vault.json` files, `unlock.key` files, SSH `known_hosts` entries, and `hag_...` agent tokens remain 100% compatible.
+
+## [0.1.0] - 2026-10-20
+
+### Added
+- **Home Assistant OS Add-on (`agent_gateway/`)**: `config.yaml`, `build.yaml`, `Dockerfile`, `apparmor.txt`, `run.sh`, and root `repository.yaml` targeting `amd64` and `aarch64`.
+- **Two-Listener Architecture**:
+  - Management listener (`:8099`) gated to the Home Assistant Supervisor Ingress peer (`172.30.32.2`), requiring `X-Remote-User-Id`, an optional administrator user ID allowlist, and same-origin + `X-Gateway-Request: 1` CSRF checks.
+  - Agent listener (`:8098`, off on host network by default) serving REST `/api/v1/*` and MCP Streamable HTTP at `/mcp` (`MCP-Protocol-Version: 2025-06-18`), authenticated with per-agent `hag_...` bearer tokens stored as SHA-256 digests.
+- **Credential Vault (`gateway.vault`)**: AES-256-GCM authenticated encryption with per-record 96-bit random nonces, record-ID additional authenticated data, Argon2id key derivation (`64 MiB`, `t=3`, `p=2`), encrypted export/restore, DEK rotation, and optional `0600` auto-unlock key file.
+- **Deny-by-Default Policy Engine (`gateway.policy`)**: Strict Pydantic-validated policy rules with explicit deny precedence, tool wildcards, connection scoping, target constraints (`entities`, `domains`, `ha_services`, `nodes`, `vmids`, `services`, `log_paths`, `templates`), and per-rule execution limits.
+- **Approval Service (`gateway.approvals`)**: Single-use, time-bounded approvals bound to `(agent_id, tool, connection_id, sha256(canonical_json(params)))` with policy and scope re-validation before execution.
+- **Connectors (`gateway.connectors`)**:
+  - Home Assistant REST connector (`ha.get_state`, `ha.list_entities`, `ha.get_config`, `ha.call_service`) with hard-blocked dangerous service domains (`hassio`, `homeassistant`, `shell_command`, `command_line`, `python_script`, `recorder`, `system_log`, `persistent_notification`).
+  - Proxmox VE read-only connector (`proxmox.list_nodes`, `proxmox.list_vms`, `proxmox.list_containers`, `proxmox.get_vm_status`, `proxmox.get_task_status`) using `PVEAPIToken` authentication and strict field allowlists.
+  - Restricted SSH connector (`ssh.service_status`, `ssh.read_log`, `ssh.run_template`) using `asyncssh` with mandatory `known_hosts` verification, non-root username enforcement, and shell-free argument allowlists.
+- **Structured Redacting Audit Log (`gateway.audit`, `gateway.redaction`)**: SQLite WAL audit trail with recursive secret redaction and logging filter.

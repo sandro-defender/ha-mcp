@@ -1,4 +1,4 @@
-"""Home Assistant Agent Gateway."""
+"""Home Assistant Agent Gateway package."""
 
-__version__ = "0.1.0"
-APP_NAME = "Home Assistant Agent Gateway"
+__version__ = "0.2.0"
+REPO_URL = "https://github.com/sandro-defender/ha-mcp"

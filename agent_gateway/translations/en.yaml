@@ -1,0 +1,38 @@
+configuration:
+  log_level:
+    name: Log level
+    description: >-
+      Verbosity of container stdout logs (debug, info, warning, or error). All
+      log messages pass through the gateway secret-redaction filter.
+  admin_user_ids:
+    name: Allowed Home Assistant administrator user IDs
+    description: >-
+      Optional list of Home Assistant user IDs allowed to open the Ingress
+      management interface. Leave empty to allow any Home Assistant
+      administrator with Ingress access.
+  tls_certfile:
+    name: Agent API TLS certificate path
+    description: >-
+      Optional path to a PEM certificate file (for example /ssl/fullchain.pem)
+      to enable HTTPS on the port 8098 agent listener. Must be configured
+      together with tls_keyfile.
+  tls_keyfile:
+    name: Agent API TLS private key path
+    description: >-
+      Optional path to the PEM private key matching tls_certfile (for example
+      /ssl/privkey.pem).
+  audit_retention_days:
+    name: Audit log retention (days)
+    description: >-
+      Number of days to retain structured audit log entries and completed
+      approval records before automatic background cleanup (1 to 3650 days).
+  approval_ttl_seconds:
+    name: Approval expiration TTL (seconds)
+    description: >-
+      Default time-to-live in seconds for pending human approval requests
+      before they automatically expire (30 to 3600 seconds).
+network:
+  8098/tcp: >-
+    Authenticated Agent REST (/api/v1) and MCP Streamable HTTP (/mcp) listener.
+    Disabled on the host network by default; expose only on a trusted LAN or
+    VPN.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import sqlite3
 import uuid
 from dataclasses import dataclass
@@ -15,6 +16,8 @@ from ..utils import AGENT_NAME_RE, iso, parse_iso, utcnow
 from .tokens import digest_matches, generate_agent_token, looks_like_token, token_digest, token_prefix
 
 logger = logging.getLogger(__name__)
+
+EXPIRING_SOON_DAYS = 7
 
 ALLOWED_SCOPES = frozenset(
     {
@@ -56,15 +59,39 @@ class AgentService:
     # ------------------------------------------------------------ helpers
 
     def _row_to_public(self, row: sqlite3.Row) -> dict[str, Any]:
+        keys = set(row.keys())
+        enabled = bool(row["enabled"])
+        expires_at = row["expires_at"]
+        token_pref = row["token_prefix"]
+        last_rotated_at = row["last_rotated_at"] if "last_rotated_at" in keys else row["created_at"]
+
+        token_status = "active" if enabled else "revoked"
+        days_until_expiry: int | None = None
+        if expires_at:
+            try:
+                remaining_seconds = (parse_iso(str(expires_at)) - utcnow()).total_seconds()
+                days_until_expiry = math.ceil(remaining_seconds / 86400)
+                if remaining_seconds <= 0:
+                    token_status = "expired"
+                elif enabled and days_until_expiry <= EXPIRING_SOON_DAYS:
+                    token_status = "expiring_soon"
+            except ValueError:
+                pass
+        if not enabled and token_pref == "revoked":
+            token_status = "revoked"
+
         return {
             "id": row["id"],
             "name": row["name"],
             "scopes": sorted(json.loads(row["scopes"])),
-            "enabled": bool(row["enabled"]),
-            "token_prefix": row["token_prefix"],
+            "enabled": enabled,
+            "token_prefix": token_pref,
+            "token_status": token_status,
+            "days_until_expiry": days_until_expiry,
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
-            "expires_at": row["expires_at"],
+            "last_rotated_at": last_rotated_at or row["created_at"],
+            "expires_at": expires_at,
             "last_used_at": row["last_used_at"],
             "notes": row["notes"],
         }
@@ -108,7 +135,8 @@ class AgentService:
         try:
             self.db.execute(
                 "INSERT INTO agents(id, name, token_hash, token_prefix, scopes, enabled, created_at, "
-                "updated_at, expires_at, last_used_at, notes) VALUES(?,?,?,?,?,1,?,?,?,NULL,?)",
+                "updated_at, expires_at, last_used_at, last_rotated_at, notes) "
+                "VALUES(?,?,?,?,?,1,?,?,?,NULL,?,?)",
                 (
                     agent_id,
                     name,
@@ -118,6 +146,7 @@ class AgentService:
                     now,
                     now,
                     expiry,
+                    now,
                     notes,
                 ),
             )
@@ -193,12 +222,30 @@ class AgentService:
         logger.info("agent revoked id=%s", agent_id)
         return self.get_agent(agent_id)
 
-    def rotate_token(self, agent_id: str) -> tuple[dict[str, Any], str]:
-        self.get_agent(agent_id)
+    def rotate_token(
+        self,
+        agent_id: str,
+        *,
+        expires_at: str | None = None,
+        reenable: bool = True,
+    ) -> tuple[dict[str, Any], str]:
+        current = self.get_agent(agent_id)
+        new_expiry = self._validate_expiry(expires_at) if expires_at is not None else current["expires_at"]
         token = generate_agent_token()
+        now = iso()
+        new_enabled = 1 if reenable else int(bool(current["enabled"]))
         self.db.execute(
-            "UPDATE agents SET token_hash=?, token_prefix=?, updated_at=? WHERE id=?",
-            (token_digest(token), token_prefix(token), iso(), agent_id),
+            "UPDATE agents SET token_hash=?, token_prefix=?, enabled=?, expires_at=?, "
+            "last_rotated_at=?, updated_at=? WHERE id=?",
+            (
+                token_digest(token),
+                token_prefix(token),
+                new_enabled,
+                new_expiry,
+                now,
+                now,
+                agent_id,
+            ),
         )
         logger.info("agent token rotated id=%s", agent_id)
         return self.get_agent(agent_id), token

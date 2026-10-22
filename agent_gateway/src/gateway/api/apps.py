@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.routing import Route
 
@@ -62,6 +62,11 @@ def build_admin_app(runtime: Runtime) -> FastAPI:
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/readyz", include_in_schema=False)
+    def readyz() -> JSONResponse:
+        payload = runtime.readiness()
+        return JSONResponse(status_code=200 if payload["ready"] else 503, content=payload)
+
     @app.get("/", include_in_schema=False)
     def index() -> HTMLResponse:
         index_file = UI_DIR / "index.html"
@@ -75,8 +80,11 @@ def build_admin_app(runtime: Runtime) -> FastAPI:
             },
         )
 
-    @app.get("/favicon.ico", include_in_schema=False)
+    @app.get("/favicon.ico", include_in_schema=False, response_model=None)
     def favicon() -> Response:
+        svg_file = UI_DIR / "favicon.svg"
+        if svg_file.is_file():
+            return FileResponse(svg_file, media_type="image/svg+xml")
         return Response(status_code=204)
 
     if UI_DIR.is_dir():
@@ -102,6 +110,7 @@ def build_agent_app(runtime: Runtime) -> FastAPI:
         settings_store=runtime.settings_store,
         settings=runtime.settings,
         limiter=runtime.rate_limiter,
+        audit=runtime.audit,
     )
     app.add_middleware(BodyLimitMiddleware, max_bytes=runtime.settings.mcp_max_request_bytes)
     app.add_middleware(AccessLogMiddleware)
@@ -111,6 +120,11 @@ def build_agent_app(runtime: Runtime) -> FastAPI:
     @app.get("/healthz", include_in_schema=False)
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/readyz", include_in_schema=False)
+    def readyz() -> JSONResponse:
+        payload = runtime.readiness()
+        return JSONResponse(status_code=200 if payload["ready"] else 503, content=payload)
 
     # Serve the MCP endpoint at both `/mcp` and `/mcp/`.  A Starlette `Mount`
     # would answer `/mcp` with a 307 redirect to `/mcp/`, which is harmless for

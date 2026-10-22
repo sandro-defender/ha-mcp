@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Home Assistant Agent Gateway">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0B192C"/>
+      <stop offset="55%" stop-color="#0F2942"/>
+      <stop offset="100%" stop-color="#091526"/>
+    </linearGradient>
+    <linearGradient id="shieldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#0284C7"/>
+    </linearGradient>
+    <linearGradient id="coreGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4ADE80"/>
+      <stop offset="100%" stop-color="#16A34A"/>
+    </linearGradient>
+  </defs>
+  <!-- Outer rounded container that contrasts cleanly on both light and dark HA backgrounds -->
+  <rect x="6" y="6" width="116" height="116" rx="26" fill="url(#bgGrad)" stroke="#38BDF8" stroke-width="3" stroke-opacity="0.65"/>
+  <rect x="12" y="12" width="104" height="104" rx="21" fill="none" stroke="#1E3A5F" stroke-width="1.5"/>
+
+  <!-- Subtle circuit/conduit lines representing the 3 guarded connectors (HA, Proxmox, SSH) -->
+  <g stroke="#38BDF8" stroke-width="2.5" stroke-linecap="round" opacity="0.55">
+    <line x1="64" y1="18" x2="64" y2="28"/>
+    <line x1="23" y1="44" x2="33" y2="50"/>
+    <line x1="105" y1="44" x2="95" y2="50"/>
+    <line x1="28" y1="92" x2="38" y2="84"/>
+    <line x1="100" y1="92" x2="90" y2="84"/>
+  </g>
+  <circle cx="64" cy="18" r="3.5" fill="#38BDF8"/>
+  <circle cx="23" cy="44" r="3.5" fill="#38BDF8"/>
+  <circle cx="105" cy="44" r="3.5" fill="#38BDF8"/>
+  <circle cx="28" cy="92" r="3.5" fill="#4ADE80"/>
+  <circle cx="100" cy="92" r="3.5" fill="#4ADE80"/>
+
+  <!-- Outer Policy Shield -->
+  <path d="M64 25 L98 39 V65 C98 86 83.5 101.5 64 108 C44.5 101.5 30 86 30 65 V39 Z"
+        fill="#0B1324" stroke="url(#shieldGrad)" stroke-width="4.5" stroke-linejoin="round"/>
+
+  <!-- Inner Gateway Arch / Vault Ring -->
+  <path d="M64 35 L88 45 V64 C88 79.5 77.5 91.5 64 97 C50.5 91.5 40 79.5 40 64 V45 Z"
+        fill="#112239" stroke="#1E3A5F" stroke-width="2" stroke-linejoin="round"/>
+
+  <!-- Central Lock & Policy Gate Node -->
+  <rect x="51" y="59" width="26" height="22" rx="5" fill="url(#shieldGrad)"/>
+  <path d="M56 59 V52 C56 47.5 59.6 44 64 44 C68.4 44 72 47.5 72 52 V59"
+        fill="none" stroke="#BAE6FD" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="64" cy="68" r="3.2" fill="#081120"/>
+  <path d="M64 71 V76" stroke="#081120" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- Verified Approval Check Badge (bottom-right of shield) -->
+  <circle cx="85" cy="85" r="12" fill="url(#coreGrad)" stroke="#0B192C" stroke-width="3"/>
+  <path d="M80 85.2 L83.5 88.8 L90.5 81.5" fill="none" stroke="#06140B" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

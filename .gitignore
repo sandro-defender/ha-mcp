@@ -21,8 +21,9 @@ vault.json
 vault.json.bak
 unlock.key
 
-# Node / editor / OS noise
+# Node / editor / OS / local AI agent skills
 node_modules/
+.claude/
 .DS_Store
 .idea/
 .vscode/

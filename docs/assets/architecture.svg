@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 340" width="960" height="340" role="img" aria-label="Home Assistant Agent Gateway Architecture">
+  <rect x="2" y="2" width="956" height="336" rx="16" fill="#0B1120" stroke="#1E293B" stroke-width="2"/>
+  <text x="32" y="38" fill="#F8FAFC" font-family="DejaVu Sans, system-ui, sans-serif" font-size="18" font-weight="700">Security Boundary &amp; Two-Listener Architecture</text>
+  <text x="32" y="60" fill="#94A3B8" font-family="DejaVu Sans, system-ui, sans-serif" font-size="13">External agents never receive upstream tokens or SSH keys; every call traverses scope, policy, approval, and redaction gates.</text>
+
+  <!-- Left: External Agents & Admin -->
+  <rect x="32" y="84" width="230" height="106" rx="12" fill="#0F172A" stroke="#38BDF8" stroke-width="1.5"/>
+  <text x="48" y="110" fill="#38BDF8" font-family="DejaVu Sans, system-ui, sans-serif" font-size="12" font-weight="700">EXTERNAL AI AGENTS (LAN / VPN)</text>
+  <text x="48" y="132" fill="#F8FAFC" font-family="DejaVu Sans, system-ui, sans-serif" font-size="14" font-weight="600">Claude / Cursor / Windows</text>
+  <text x="48" y="154" fill="#94A3B8" font-family="DejaVu Sans, system-ui, sans-serif" font-size="12">POST /mcp · /api/v1/* (:8098)</text>
+  <text x="48" y="174" fill="#64748B" font-family="DejaVu Sans, system-ui, sans-serif" font-size="11.5">Auth: Bearer hag_... (SHA-256)</text>
+
+  <rect x="32" y="206" width="230" height="106" rx="12" fill="#0F172A" stroke="#4ADE80" stroke-width="1.5"/>
+  <text x="48" y="232" fill="#4ADE80" font-family="DejaVu Sans, system-ui, sans-serif" font-size="12" font-weight="700">HOME ASSISTANT INGRESS</text>
+  <text x="48" y="254" fill="#F8FAFC" font-family="DejaVu Sans, system-ui, sans-serif" font-size="14" font-weight="600">Admin Control Panel (:8099)</text>
+  <text x="48" y="276" fill="#94A3B8" font-family="DejaVu Sans, system-ui, sans-serif" font-size="12">Supervisor Peer 172.30.32.2</text>
+  <text x="48" y="296" fill="#64748B" font-family="DejaVu Sans, system-ui, sans-serif" font-size="11.5">Vault · Policies · Approvals · Audit</text>
+
+  <!-- Arrows into Gateway -->
+  <g stroke="#38BDF8" stroke-width="2" fill="none">
+    <line x1="262" y1="137" x2="322" y2="137"/>
+    <polygon points="322,133 330,137 322,141" fill="#38BDF8" stroke="none"/>
+  </g>
+  <g stroke="#4ADE80" stroke-width="2" fill="none">
+    <line x1="262" y1="259" x2="322" y2="259"/>
+    <polygon points="322,255 330,259 322,263" fill="#4ADE80" stroke="none"/>
+  </g>
+
+  <!-- Center: Gateway Core -->
+  <rect x="328" y="84" width="312" height="228" rx="14" fill="#111C33" stroke="#0284C7" stroke-width="2"/>
+  <text x="346" y="112" fill="#E0F2FE" font-family="DejaVu Sans, system-ui, sans-serif" font-size="14" font-weight="700">Agent Gateway Enforcement Core</text>
+
+  <rect x="344" y="126" width="280" height="36" rx="8" fill="#0B1324" stroke="#1E3A5F"/>
+  <text x="356" y="149" fill="#F8FAFC" font-family="DejaVu Sans, system-ui, sans-serif" font-size="11.5">1. Scope &amp; Deny-by-Default Policy Engine</text>
+
+  <rect x="344" y="170" width="280" height="36" rx="8" fill="#0B1324" stroke="#1E3A5F"/>
+  <text x="356" y="193" fill="#F8FAFC" font-family="DejaVu Sans, system-ui, sans-serif" font-size="11.5">2. Single-Use Parameter-Bound Approvals</text>
+
+  <rect x="344" y="214" width="280" height="36" rx="8" fill="#0B1324" stroke="#1E3A5F"/>
+  <text x="356" y="237" fill="#F8FAFC" font-family="DejaVu Sans, system-ui, sans-serif" font-size="11.5">3. AES-256-GCM Credential Vault (Argon2id)</text>
+
+  <rect x="344" y="258" width="280" height="36" rx="8" fill="#0B1324" stroke="#1E3A5F"/>
+  <text x="356" y="281" fill="#F8FAFC" font-family="DejaVu Sans, system-ui, sans-serif" font-size="11.5">4. Redacting SQLite WAL Audit Trail</text>
+
+  <!-- Arrows to Targets -->
+  <g stroke="#64748B" stroke-width="2" fill="none">
+    <line x1="640" y1="120" x2="694" y2="120"/>
+    <polygon points="694,116 702,120 694,124" fill="#64748B" stroke="none"/>
+    <line x1="640" y1="198" x2="694" y2="198"/>
+    <polygon points="694,194 702,198 694,202" fill="#64748B" stroke="none"/>
+    <line x1="640" y1="276" x2="694" y2="276"/>
+    <polygon points="694,272 702,276 694,280" fill="#64748B" stroke="none"/>
+  </g>
+
+  <!-- Right: Upstream Targets -->
+  <rect x="706" y="84" width="222" height="66" rx="10" fill="#0F172A" stroke="#334155" stroke-width="1.5"/>
+  <text x="722" y="109" fill="#38BDF8" font-family="DejaVu Sans, system-ui, sans-serif" font-size="13" font-weight="700">Home Assistant Core</text>
+  <text x="722" y="131" fill="#94A3B8" font-family="DejaVu Sans, system-ui, sans-serif" font-size="11.5">State read · Approval-gated services</text>
+
+  <rect x="706" y="165" width="222" height="66" rx="10" fill="#0F172A" stroke="#334155" stroke-width="1.5"/>
+  <text x="722" y="190" fill="#F59E0B" font-family="DejaVu Sans, system-ui, sans-serif" font-size="13" font-weight="700">Proxmox VE (Read-Only)</text>
+  <text x="722" y="212" fill="#94A3B8" font-family="DejaVu Sans, system-ui, sans-serif" font-size="11.5">Nodes · VMs · Containers · Tasks</text>
+
+  <rect x="706" y="246" width="222" height="66" rx="10" fill="#0F172A" stroke="#334155" stroke-width="1.5"/>
+  <text x="722" y="271" fill="#4ADE80" font-family="DejaVu Sans, system-ui, sans-serif" font-size="13" font-weight="700">Restricted SSH Targets</text>
+  <text x="722" y="293" fill="#94A3B8" font-family="DejaVu Sans, system-ui, sans-serif" font-size="11.5">known_hosts · Non-root · Allowlists</text>
+</svg>

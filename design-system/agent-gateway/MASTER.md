@@ -1,214 +1,47 @@
-# Design System Master File
+# Design System Master: Home Assistant Agent Gateway
 
-> **LOGIC:** When building a specific page, first check `design-system/pages/[page-name].md`.
-> If that file exists, its rules **override** this Master file.
-> If not, strictly follow the rules below.
+Generated and refined with the **UI UX Pro Max** workflow (`nextlevelbuilder/ui-ux-pro-max-skill`, `--design-system --density 8 -p "Agent Gateway"`) for a security-critical Home Assistant OS Ingress application.
 
----
+## 1. Product Aesthetic & Direction
 
-**Project:** Agent Gateway
-**Generated:** 2026-10-21 22:36:09
-**Category:** Smart Home/IoT Dashboard
+- **Archetype**: Native Home Assistant Operational Control Plane & Security Boundary
+- **Tone**: Technical, calm, trustworthy, compact, and explicit about risk and authority
+- **Theme Support**:
+  - **System (`data-theme="system"`)**: Follows OS/Home Assistant `prefers-color-scheme`
+  - **Light (`data-theme="light"`)**: Crisp slate-white surfaces (`#F8FAFC` / `#FFFFFF`) with high-contrast ink (`#0F172A`)
+  - **Dark (`data-theme="dark"`)**: Deep slate surfaces (`#0B1120` / `#0F172A`) with luminous sky-cyan accents (`#38BDF8`)
+- **Typography**: System UI sans-serif (`system-ui`, `-apple-system`, `Segoe UI`, `Roboto`, `Inter`) paired with tabular monospace (`ui-monospace`, `SFMono-Regular`, `Menlo`, `Consolas`) for entity IDs, SHA-256 digests, fingerprints, ports, and JSON schemas.
 
----
+## 2. Color Tokens & WCAG AA Contrast Invariants
 
-## Global Rules
+All token pairs are verified in `agent_gateway/tests/test_ui_assets.py` for WCAG AA compliance ($\ge 4.5:1$ text contrast, $\ge 3.0:1$ border/focus contrast):
 
-### Color Palette
+| Token | Light Mode | Dark Mode | Purpose |
+| :--- | :--- | :--- | :--- |
+| `--color-bg` | `#f8fafc` | `#0b1120` | Primary application canvas |
+| `--color-surface` | `#ffffff` | `#0f172a` | Cards, tables, and modal surfaces |
+| `--color-surface-muted` | `#f1f5f9` | `#1e293b` | Secondary headers, code blocks, filter bars |
+| `--color-text` | `#0f172a` | `#f8fafc` | Primary body and heading text |
+| `--color-text-muted` | `#475569` | `#94a3b8` | Secondary metadata and timestamps |
+| `--color-border` | `#64748b` | `#64748b` | Hairline borders and control outlines |
+| `--color-accent` | `#005a9e` | `#38bdf8` | Primary interactive accent and focus ring |
+| `--color-accent-ink` | `#ffffff` | `#06121e` | Text on primary accent buttons |
+| `--color-success` | `#15803d` | `#4ade80` | Verified connections, allowed reads, active tokens |
+| `--color-warning` | `#b45309` | `#fbbf24` | Pending human approvals, expiring tokens, rotation reminders |
+| `--color-danger` | `#b91c1c` | `#f87171` | Policy denials, auth failures, emergency stop, revocation |
+| `--color-focus` | `#005a9e` | `#38bdf8` | `:focus-visible` keyboard outline |
 
-| Role | Hex | CSS Variable |
-|------|-----|--------------|
-| Primary | `#1E293B` | `--color-primary` |
-| On Primary | `#FFFFFF` | `--color-on-primary` |
-| Secondary | `#334155` | `--color-secondary` |
-| On Secondary | `#FFFFFF` | `--color-on-secondary` |
-| Accent/CTA | `#22C55E` | `--color-accent` |
-| On Accent/CTA | `#0F172A` | `--color-on-accent` |
-| Background | `#0F172A` | `--color-background` |
-| Foreground | `#F8FAFC` | `--color-foreground` |
-| Card | `#1B2336` | `--color-card` |
-| Card Foreground | `#F8FAFC` | `--color-card-foreground` |
-| Muted | `#272F42` | `--color-muted` |
-| Muted Foreground | `#94A3B8` | `--color-muted-foreground` |
-| Border | `#475569` | `--color-border` |
-| Destructive | `#EF4444` | `--color-destructive` |
-| On Destructive | `#000000` | `--color-on-destructive` |
-| Ring | `#FFFFFF` | `--color-ring` |
+## 3. 10-Section Information Architecture
 
-**Color Notes:** Dark tech + status green
+The sidebar navigation organizes the gateway into 10 dedicated operational workspaces:
 
-### Typography
-
-- **Heading Font:** Fira Code
-- **Body Font:** Fira Sans
-- **Mood:** dashboard, data, analytics, code, technical, precise
-- **Google Fonts:** [Fira Code + Fira Sans](https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap)
-
-**CSS Import:**
-```css
-@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap');
-```
-
-### Spacing Variables
-
-| Token | Value | Usage |
-|-------|-------|-------|
-| `--space-xs` | `4px` / `0.25rem` | Tight gaps |
-| `--space-sm` | `8px` / `0.5rem` | Icon gaps, inline spacing |
-| `--space-md` | `16px` / `1rem` | Standard padding |
-| `--space-lg` | `24px` / `1.5rem` | Section padding |
-| `--space-xl` | `32px` / `2rem` | Large gaps |
-| `--space-2xl` | `48px` / `3rem` | Section margins |
-| `--space-3xl` | `64px` / `4rem` | Hero padding |
-
-### Shadow Depths
-
-| Level | Value | Usage |
-|-------|-------|-------|
-| `--shadow-sm` | `0 1px 2px rgba(0,0,0,0.05)` | Subtle lift |
-| `--shadow-md` | `0 4px 6px rgba(0,0,0,0.1)` | Cards, buttons |
-| `--shadow-lg` | `0 10px 15px rgba(0,0,0,0.1)` | Modals, dropdowns |
-| `--shadow-xl` | `0 20px 25px rgba(0,0,0,0.15)` | Hero images, featured cards |
-
----
-
-## Component Specs
-
-### Buttons
-
-```css
-/* Primary Button */
-.btn-primary {
-  background: #22C55E;
-  color: #0F172A;
-  padding: 12px 24px;
-  border-radius: 8px;
-  font-weight: 600;
-  transition: all 200ms ease;
-  cursor: pointer;
-}
-
-.btn-primary:hover {
-  opacity: 0.9;
-  transform: translateY(-1px);
-}
-
-/* Secondary Button */
-.btn-secondary {
-  background: transparent;
-  color: #F8FAFC;
-  border: 2px solid #1E293B;
-  padding: 12px 24px;
-  border-radius: 8px;
-  font-weight: 600;
-  transition: all 200ms ease;
-  cursor: pointer;
-}
-```
-
-### Cards
-
-```css
-.card {
-  background: #0F172A;
-  border-radius: 12px;
-  padding: 24px;
-  box-shadow: var(--shadow-md);
-  transition: all 200ms ease;
-  cursor: pointer;
-}
-
-.card:hover {
-  box-shadow: var(--shadow-lg);
-  transform: translateY(-2px);
-}
-```
-
-### Inputs
-
-```css
-.input {
-  padding: 12px 16px;
-  border: 1px solid #E2E8F0;
-  border-radius: 8px;
-  font-size: 16px;
-  transition: border-color 200ms ease;
-}
-
-.input:focus {
-  border-color: #1E293B;
-  outline: none;
-  box-shadow: 0 0 0 3px #1E293B20;
-}
-```
-
-### Modals
-
-```css
-.modal-overlay {
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(4px);
-}
-
-.modal {
-  background: white;
-  border-radius: 16px;
-  padding: 32px;
-  box-shadow: var(--shadow-xl);
-  max-width: 500px;
-  width: 90%;
-}
-```
-
----
-
-## Style Guidelines
-
-**Style:** Glassmorphism
-
-**Keywords:** Frosted glass, transparent, blurred background, layered, vibrant background, light source, depth, multi-layer
-
-**Best For:** Modern SaaS, financial dashboards, high-end corporate, lifestyle apps, modal overlays, navigation
-
-**Key Effects:** Backdrop blur (10-20px), subtle border (1px solid rgba white 0.2), light reflection, Z-depth
-
-### Page Pattern
-
-**Pattern Name:** Real-Time / Operations Landing
-
-- **Conversion Strategy:** Offer a demo or sandbox and show trust signals. Label telemetry as live only when backed by a current source, with update time and stale state. Provide pause/hide or update-frequency controls for tickers and previews, stop offscreen/hidden work, support keyboard controls, and render a static final snapshot under reduced motion.
-- **CTA Placement:** Primary CTA in nav + After metrics
-- **Section Order:** Hero (product + live preview or status) > Key metrics/indicators > How it works > CTA (Start trial / Contact)
-
----
-
-## Anti-Patterns (Do NOT Use)
-
-- ❌ Slow updates
-- ❌ No automation
-
-### Additional Forbidden Patterns
-
-- ❌ **Emojis as icons** — Use SVG icons (Heroicons, Lucide, Simple Icons)
-- ❌ **Missing cursor:pointer** — All clickable elements must have cursor:pointer
-- ❌ **Layout-shifting hovers** — Avoid scale transforms that shift layout
-- ❌ **Low contrast text** — Maintain 4.5:1 minimum contrast ratio
-- ❌ **Instant state changes** — Always use transitions (150-300ms)
-- ❌ **Invisible focus states** — Focus states must be visible for a11y
-
----
-
-## Pre-Delivery Checklist
-
-Before delivering any UI code, verify:
-
-- [ ] No emojis used as icons (use SVG instead)
-- [ ] All icons from consistent icon set (Heroicons/Lucide)
-- [ ] `cursor-pointer` on all clickable elements
-- [ ] Hover states with smooth transitions (150-300ms)
-- [ ] Light mode: text contrast 4.5:1 minimum
-- [ ] Focus states visible for keyboard navigation
-- [ ] `prefers-reduced-motion` respected
-- [ ] Responsive: 375px, 768px, 1024px, 1440px
-- [ ] No content hidden behind fixed navbars
-- [ ] No horizontal scroll on mobile
+1. **Overview (`#overview` / `#dashboard`)**: Post-update release banner, proactive security warnings, health telemetry cards, security posture checklist, pending approval queue preview, recent activity, and GitHub links.
+2. **Connections (`#connections`)**: Home Assistant, Proxmox VE, and non-root SSH targets with multi-step connection diagnostics, latency tracking, error classification, `last_ok_at` timestamps, and SSH `known_hosts` enrollment.
+3. **Credentials (`#credentials`)**: AES-256-GCM + Argon2id vault lifecycle, encrypted backup/restore, write-only secret storage, connection reference tracking, and 90-day rotation reminders.
+4. **Agents (`#agents`)**: Individual agent identities, descriptions, scoped permissions, allowed/denied tool patterns, token expiry warnings, token rotation, immediate revocation, and per-agent request/denial/rate-limit counters.
+5. **Tools (`#tools`)**: Tool group toggles, 12-tool catalog with risk & approval classification, JSON Schema inspector, and copy-ready MCP JSON-RPC, `curl`, and Windows PowerShell snippets.
+6. **Permissions (`#permissions`)**: Visual allow/deny policy rule builder, starter templates, raw JSON policy editor, and an interactive **Policy Simulator** (`POST /api/admin/policies/evaluate`).
+7. **Approvals (`#approvals`)**: Pending human approval queue with requester identity, target connection, risk badge, redacted parameter summary, SHA-256 request hash, expiration countdown, and single-use Approve / Reject controls.
+8. **Audit Log (`#audit`)**: Searchable, filterable, paginated SQLite WAL audit log with actor/tool/status filters, detail inspection modal, redaction verification, and JSON export.
+9. **Updates and Changelog (`#updates`)**: Installed vs. latest version status, on-demand cached GitHub release check, post-update notice & migration notes, structured Keep-a-Changelog release history, and repository links.
+10. **Settings and Diagnostics (`#settings`)**: Theme selector (`System`, `Light`, `Dark`), TTL/retention/timeout bounds, readiness probes (`/readyz`), and redacted diagnostic bundle export (`gateway-diagnostics-redacted.json`).

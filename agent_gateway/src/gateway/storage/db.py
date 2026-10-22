@@ -1,4 +1,4 @@
-"""SQLite persistence.
+"""SQLite persistence and schema migration.
 
 One process owns the database.  WAL mode plus a process-wide lock keeps
 transactions short and serialized; this is not a multi-replica design.
@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS agents (
     updated_at TEXT NOT NULL,
     expires_at TEXT,
     last_used_at TEXT,
+    last_rotated_at TEXT,
     notes TEXT NOT NULL DEFAULT ''
 );
 
@@ -61,7 +62,9 @@ CREATE TABLE IF NOT EXISTS connections (
     credential_id TEXT,
     status TEXT NOT NULL DEFAULT 'unconfigured',
     last_check_at TEXT,
+    last_ok_at TEXT,
     last_check_message TEXT,
+    last_check_detail TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -143,20 +146,77 @@ class Database:
             self._conn.execute("PRAGMA foreign_keys=ON")
             self._conn.execute("PRAGMA busy_timeout=5000")
             self._conn.executescript(SCHEMA)
-            row = self._conn.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()
-            if row is None:
-                self._conn.execute(
-                    "INSERT INTO schema_meta(key, value) VALUES('schema_version', ?)",
-                    (str(SCHEMA_VERSION),),
-                )
-            elif int(row["value"]) > SCHEMA_VERSION:
-                raise RuntimeError("database schema is newer than this gateway release")
+            self._ensure_schema_version()
         # The database contains hashes, policies, and audit data, not vault
         # secrets; still keep it owner-only.
         try:
             self.path.chmod(0o600)
         except OSError:
             pass
+
+    def _ensure_schema_version(self) -> None:
+        from ..utils import iso
+
+        row = self._conn.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()
+        if row is None:
+            self._ensure_v2_columns()
+            self._conn.execute(
+                "INSERT INTO schema_meta(key, value) VALUES('schema_version', ?)",
+                (str(SCHEMA_VERSION),),
+            )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO schema_meta(key, value) VALUES('migrated_at', ?)",
+                (iso(),),
+            )
+            return
+
+        current_version = int(row["value"])
+        if current_version > SCHEMA_VERSION:
+            raise RuntimeError("database schema is newer than this gateway release")
+        if current_version < SCHEMA_VERSION:
+            self._ensure_v2_columns()
+            self._conn.execute(
+                "INSERT OR REPLACE INTO schema_meta(key, value) VALUES('migrated_from', ?)",
+                (str(current_version),),
+            )
+            self._conn.execute(
+                "INSERT OR REPLACE INTO schema_meta(key, value) VALUES('migrated_at', ?)",
+                (iso(),),
+            )
+            self._conn.execute(
+                "UPDATE schema_meta SET value=? WHERE key='schema_version'",
+                (str(SCHEMA_VERSION),),
+            )
+        else:
+            self._ensure_v2_columns()
+
+    def _ensure_v2_columns(self) -> None:
+        agent_cols = {str(r["name"]) for r in self._conn.execute("PRAGMA table_info(agents)").fetchall()}
+        if "last_rotated_at" not in agent_cols:
+            self._conn.execute("ALTER TABLE agents ADD COLUMN last_rotated_at TEXT")
+            self._conn.execute("UPDATE agents SET last_rotated_at = created_at WHERE last_rotated_at IS NULL")
+
+        conn_cols = {str(r["name"]) for r in self._conn.execute("PRAGMA table_info(connections)").fetchall()}
+        if "last_ok_at" not in conn_cols:
+            self._conn.execute("ALTER TABLE connections ADD COLUMN last_ok_at TEXT")
+            self._conn.execute(
+                "UPDATE connections SET last_ok_at = last_check_at WHERE status = 'ok' AND last_ok_at IS NULL"
+            )
+        if "last_check_detail" not in conn_cols:
+            self._conn.execute(
+                "ALTER TABLE connections ADD COLUMN last_check_detail TEXT NOT NULL DEFAULT '{}'"
+            )
+
+    def schema_info(self) -> dict[str, Any]:
+        rows = self.query_all("SELECT key, value FROM schema_meta")
+        meta = {str(r["key"]): str(r["value"]) for r in rows}
+        return {
+            "version": int(meta.get("schema_version", SCHEMA_VERSION)),
+            "target_version": SCHEMA_VERSION,
+            "migrated_from": int(meta["migrated_from"]) if "migrated_from" in meta else None,
+            "migrated_at": meta.get("migrated_at"),
+            "status": "up_to_date",
+        }
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
@@ -208,6 +268,7 @@ class SettingsStore:
         "approval_ttl_seconds": 600,
         "max_operation_timeout_seconds": 120,
         "max_output_bytes": 262144,
+        "ui_theme": "system",
     }
     ALLOWED_KEYS = frozenset(DEFAULTS)
 

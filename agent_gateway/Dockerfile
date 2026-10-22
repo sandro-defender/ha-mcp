@@ -2,7 +2,16 @@ ARG BUILD_FROM=ghcr.io/home-assistant/base:3.24
 FROM ${BUILD_FROM}
 
 ARG BUILD_ARCH
-ARG BUILD_VERSION=0.1.0
+ARG BUILD_VERSION=0.2.0
+
+LABEL \
+  io.hass.name="Home Assistant Agent Gateway" \
+  io.hass.description="Policy-controlled gateway for AI agents to operate Home Assistant, Proxmox VE, and restricted SSH targets" \
+  io.hass.arch="${BUILD_ARCH}" \
+  io.hass.type="addon" \
+  io.hass.version="${BUILD_VERSION}" \
+  org.opencontainers.image.source="https://github.com/sandro-defender/ha-mcp" \
+  org.opencontainers.image.version="${BUILD_VERSION}"
 
 ENV LANG=C.UTF-8 \
     PYTHONUNBUFFERED=1 \
@@ -17,7 +26,7 @@ RUN apk add --no-cache python3 py3-pip su-exec \
     && /opt/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel
 
 WORKDIR /app
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md CHANGELOG.md ./
 COPY src ./src
 RUN /opt/venv/bin/pip install --no-cache-dir .
 

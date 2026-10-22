@@ -15,8 +15,9 @@ from ..auth.agents import ALLOWED_SCOPES, SCOPE_DESCRIPTIONS
 from ..errors import ConflictError, RateLimited, ValidationFailure, VaultError
 from ..policy.models import READ_ONLY_TEMPLATES, PolicyDocument
 from ..redaction import redact_text
-from ..runtime import Runtime
+from ..runtime import CREDENTIAL_ROTATION_REMINDER_DAYS, Runtime
 from ..tools.registry import TOOL_GROUPS
+from ..utils import parse_iso, utcnow
 from ..vault.manager import SECRET_KINDS
 from .deps import get_admin, get_runtime
 from .middleware import AdminPrincipal
@@ -32,7 +33,10 @@ from .schemas import (
     CredentialUpdateRequest,
     HostKeyTrustRequest,
     PasswordRequest,
+    PolicySimulationRequest,
     PolicyUpdateRequest,
+    ReleaseAcknowledgeRequest,
+    ReleaseCheckRequest,
     SettingsUpdateRequest,
     ToolGroupsRequest,
     VaultImportRequest,
@@ -81,6 +85,14 @@ def status(
 ) -> dict[str, Any]:
     _ = admin
     return runtime.status()
+
+
+@router.get("/readiness")
+def readiness(
+    runtime: Runtime = Depends(get_runtime), admin: AdminPrincipal = Depends(get_admin)
+) -> dict[str, Any]:
+    _ = admin
+    return runtime.readiness()
 
 
 @router.get("/scopes")
@@ -235,8 +247,18 @@ def list_credentials(
 ) -> dict[str, Any]:
     _ = admin
     credentials = runtime.vault.list_secrets()
+    now = utcnow()
     for credential in credentials:
         credential["used_by_connections"] = _credential_references(runtime, credential["id"])
+        age_days = 0
+        updated_str = credential.get("updated_at") or credential.get("created_at")
+        if updated_str:
+            try:
+                age_days = max(0, (now - parse_iso(str(updated_str))).days)
+            except ValueError:
+                age_days = 0
+        credential["age_days"] = age_days
+        credential["rotation_recommended"] = age_days >= CREDENTIAL_ROTATION_REMINDER_DAYS
     return {"items": credentials, "kinds": sorted(SECRET_KINDS)}
 
 
@@ -421,11 +443,9 @@ def list_agents(
     runtime: Runtime = Depends(get_runtime), admin: AdminPrincipal = Depends(get_admin)
 ) -> dict[str, Any]:
     _ = admin
-    agents = runtime.agents.list_agents()
+    agents = runtime.enrich_agents()
     for agent in agents:
-        policy = runtime.policies.get_policy(agent["id"])
-        rules = policy["document"].get("rules", [])
-        agent["policy_rules"] = len(rules) if isinstance(rules, list) else 0
+        agent["policy_rules"] = agent["rule_count"]
     return {"items": agents}
 
 
@@ -533,6 +553,21 @@ def policy_templates(admin: AdminPrincipal = Depends(get_admin)) -> dict[str, An
     return {"templates": READ_ONLY_TEMPLATES}
 
 
+@router.post("/policies/evaluate")
+def evaluate_policy_simulation(
+    payload: PolicySimulationRequest,
+    runtime: Runtime = Depends(get_runtime),
+    admin: AdminPrincipal = Depends(get_admin),
+) -> dict[str, Any]:
+    _ = admin
+    return runtime.simulate_policy(
+        agent_id=payload.agent_id,
+        tool_name=payload.tool,
+        connection_id=payload.connection_id,
+        params=payload.params,
+    )
+
+
 # --------------------------------------------------------------------- tools
 
 
@@ -587,7 +622,27 @@ def list_approvals(
     admin: AdminPrincipal = Depends(get_admin),
 ) -> dict[str, Any]:
     _ = admin
-    return runtime.approvals.list(status=status, limit=limit, offset=offset)
+    listing = runtime.approvals.list(status=status, limit=limit, offset=offset)
+    agents_by_id = {a["id"]: a["name"] for a in runtime.agents.list_agents()}
+    conns_by_id = {c["id"]: c for c in runtime.connections.list_connections()}
+    specs_by_name = {s.name: s for s in runtime.tools.all_specs()}
+    now = utcnow()
+    for item in listing.get("items", []):
+        item["agent_name"] = agents_by_id.get(item["agent_id"], item["agent_id"])
+        conn = conns_by_id.get(item.get("connection_id") or "")
+        item["connection_name"] = conn["name"] if conn else (item.get("connection_id") or "—")
+        item["connection_type"] = conn["type"] if conn else None
+        spec = specs_by_name.get(item["tool"])
+        item["risk"] = spec.risk if spec else "write"
+        item["tool_summary"] = spec.summary if spec else ""
+        remaining_seconds: int | None = None
+        if item["status"] == "pending" and item.get("expires_at"):
+            try:
+                remaining_seconds = max(0, int((parse_iso(str(item["expires_at"])) - now).total_seconds()))
+            except ValueError:
+                remaining_seconds = None
+        item["remaining_seconds"] = remaining_seconds
+    return listing
 
 
 @router.post("/approvals/{approval_id}/approve")
@@ -714,3 +769,71 @@ def verify_redaction(
             item in sample for item in ("hunter2", "abcdefghijklmnop", "!tok=secret")
         ),
     }
+
+
+# ------------------------------------------------- releases & diagnostics
+
+
+@router.get("/releases")
+def get_releases(
+    runtime: Runtime = Depends(get_runtime), admin: AdminPrincipal = Depends(get_admin)
+) -> dict[str, Any]:
+    _ = admin
+    return runtime.releases.get_release_summary()
+
+
+@router.post("/releases/check")
+async def check_releases(
+    payload: ReleaseCheckRequest | None = None,
+    runtime: Runtime = Depends(get_runtime),
+    admin: AdminPrincipal = Depends(get_admin),
+) -> dict[str, Any]:
+    req = payload or ReleaseCheckRequest()
+    result = await runtime.releases.check_for_updates(force=req.force)
+    runtime.audit.admin_action(
+        admin_id=admin.user_id,
+        action="releases.check",
+        params={"force": req.force, "status": result["check_status"]},
+    )
+    return result
+
+
+@router.post("/releases/acknowledge")
+def acknowledge_release(
+    payload: ReleaseAcknowledgeRequest | None = None,
+    runtime: Runtime = Depends(get_runtime),
+    admin: AdminPrincipal = Depends(get_admin),
+) -> dict[str, Any]:
+    req = payload or ReleaseAcknowledgeRequest()
+    result = runtime.releases.acknowledge_version(req.version)
+    runtime.audit.admin_action(
+        admin_id=admin.user_id,
+        action="releases.acknowledge",
+        params={"version": req.version or result["installed_version"]},
+    )
+    return result
+
+
+@router.get("/diagnostics")
+def get_diagnostics(
+    runtime: Runtime = Depends(get_runtime), admin: AdminPrincipal = Depends(get_admin)
+) -> dict[str, Any]:
+    _ = admin
+    return runtime.diagnostic_bundle()
+
+
+@router.get("/diagnostics/export")
+def export_diagnostics(
+    runtime: Runtime = Depends(get_runtime), admin: AdminPrincipal = Depends(get_admin)
+) -> Response:
+    bundle = runtime.diagnostic_bundle()
+    runtime.audit.admin_action(admin_id=admin.user_id, action="diagnostics.export")
+    payload = json.dumps(bundle, indent=2, sort_keys=True).encode("utf-8")
+    return Response(
+        content=payload,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": 'attachment; filename="gateway-diagnostics-redacted.json"',
+            "Cache-Control": "no-store",
+        },
+    )
