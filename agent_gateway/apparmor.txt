@@ -24,7 +24,10 @@ profile ha_agent_gateway flags=(attach_disconnected,mediate_deleted) {
   #   /bin/sh: can't open '/init': Permission denied
   # Rules per HA developer docs "S6-Overlay 3.x update on our docker base
   # images" (custom AppArmor profiles must include this block).
-  /init ix,
+  # The Supervisor can invoke the entrypoint through /bin/sh, which must
+  # read the script as well as execute it. `ix` alone caused the shell's
+  # `can't open '/init': Permission denied` error on affected installations.
+  /init rix,
   /package/** ix,
   /command/** ix,
   /etc/services.d/** rwix,

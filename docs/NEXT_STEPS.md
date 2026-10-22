@@ -4,12 +4,12 @@
 > each session. `P0` blocks a production claim; lower numbers = do sooner.
 > Verification levels per `AGENTS.md` §4.
 
-## P0 — verify 0.3.0 on real Home Assistant OS (blocked: needs user's HA OS)
+## P0 — verify 0.3.1 on real Home Assistant OS (blocked: needs user's HA OS)
 
-- **Task:** Install/update the add-on to 0.3.0 from this repository on the
-  real HA OS host; confirm startup under the Supervisor (0.2.1 AppArmor
-  `/init` fix + 0.3.0 code), open the panel via Ingress, and confirm the
-  existing `/data` migrates v2 → v3 in place.
+- **Task:** Install/update the add-on to 0.3.1 from this repository on the
+  real HA OS host; confirm startup under the Supervisor (AppArmor `/init rix`
+  fix + 0.3.0 code), open the panel via Ingress, and confirm the existing
+  `/data` migrates v2 → v3 in place.
 - **Depends on:** user authorization + access to the HA OS host. Do **not**
   deploy without explicit approval.
 - **Acceptance criteria:**

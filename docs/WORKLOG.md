@@ -5,6 +5,30 @@
 > Runtime detail lives in the gateway Project Journal; this file is the
 > repository-side mirror (`AGENTS.md` §2).
 
+## 2026-10-22 — `/init` AppArmor read permission follow-up (0.3.1)
+
+**Agent/session:** Arena coding agent, branch `arena/100263ca-ha-mcp`.
+
+**What changed**
+- Follow-up to the user's report that version 0.3.0 still logs
+  `/bin/sh: can't open '/init': Permission denied`: changed AppArmor rule from
+  `/init ix` to `/init rix`. The shell error indicates `/bin/sh` is trying to
+  read `/init` as a script; execute-only permission is insufficient for that
+  launch path. Kept `init: false` and the HA base image unchanged.
+- Updated the packaging regression test and troubleshooting docs; bumped all
+  add-on/runtime version declarations from 0.3.0 to 0.3.1 so Supervisor can
+  offer the corrected package.
+
+**Verified**
+- `python -m compileall -q agent_gateway/tests/test_packaging.py` → passed.
+- Version-sync and AppArmor-source assertion script → passed (all four runtime
+  version declarations are 0.3.1; `/init rix` is present in profile + test).
+- `git diff --check` → passed.
+- `pytest -q agent_gateway/tests/test_packaging.py` → not run: `pytest` is not
+  installed in this sandbox (`/bin/bash: pytest: command not found`).
+- Live add-on/HA OS startup → not run; no Supervisor or Docker daemon is
+  available. The fix still needs confirmation on the user's Home Assistant.
+
 ## 2026-10-22 — Persistent Project Journal & session handoffs (0.3.0)
 
 **Agent/session:** Arena coding agent, branch `arena/8c62810b-ha-mcp`,

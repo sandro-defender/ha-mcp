@@ -4,7 +4,7 @@
 
 > Policy-controlled gateway for AI agents to operate Home Assistant, Proxmox VE, and restricted SSH targets — without ever receiving credentials.
 
-[![version](https://img.shields.io/badge/version-0.3.0-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.3.1-blue)](CHANGELOG.md)
 [![architectures](https://img.shields.io/badge/arch-amd64%20%7C%20aarch64-lightgrey)](agent_gateway/config.yaml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -24,7 +24,7 @@ A **Home Assistant OS add-on** that sits between external AI coding agents (Clau
 - **Credentials stay in an AES-256-GCM + Argon2id vault** inside `/data`. They are never returned to agents, never appear in the UI after saving, and never enter logs or error messages.
 - **Deny-by-default policies, single-use approvals, and a redacted audit log** make every operation reviewable.
 
-Project status: **0.3.0 — implemented and locally tested.** It has not been installed on a live Home Assistant OS system, has not been exercised against real Home Assistant/Proxmox/SSH targets in this environment, and has not been security-audited. See [Verification log](#verification-log) and [`docs/SECURITY.md`](docs/SECURITY.md).
+Project status: **0.3.1 — startup permission follow-up; the full suite was not available in this session.** It has not been installed on a live Home Assistant OS system, has not been exercised against real Home Assistant/Proxmox/SSH targets in this environment, and has not been security-audited. See [Verification log](#verification-log) and [`docs/SECURITY.md`](docs/SECURITY.md).
 
 ---
 

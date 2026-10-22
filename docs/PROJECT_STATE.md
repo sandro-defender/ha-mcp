@@ -6,12 +6,11 @@
 > Runtime records: the gateway Project Journal (`docs/JOURNAL.md`).
 
 - **Last updated:** 2026-10-22 by Arena coding agent (session
-  `arena/8c62810b-ha-mcp`)
-- **Branch:** `arena/8c62810b-ha-mcp` · **Latest commit:** `4af61b0`
-  ("feat(journal): persistent AI agent work journal and session handoffs
-  (0.3.0)") on top of `main`@`6857797`
-- **Version:** 0.3.0 (synced across config/pyproject/Dockerfile/`__init__`/
-  both CHANGELOGs; unreleased until tagged)
+  `arena/100263ca-ha-mcp`)
+- **Branch:** `arena/100263ca-ha-mcp` · working tree has the 0.3.1 AppArmor
+  startup follow-up; not yet released.
+- **Version:** 0.3.1 (synced across config/pyproject/Dockerfile/`__init__`/
+  both CHANGELOGs; not yet released)
 
 ## Purpose and architecture
 
@@ -51,9 +50,10 @@ Exact commands and environment: see `docs/WORKLOG.md` (2026-10-22 entry).
 
 - **Live deployment verification — blocked (infrastructure).** No Home
   Assistant OS/Supervisor, Proxmox, SSH lab, or Docker daemon exists in the
-  agent sandbox. The 0.2.1 AppArmor `/init` fix and the 0.3.0 schema-v3
-  migration are verified by tests/E2E only, **not** on a real install. Must
-  be confirmed on the user's HA OS before calling 0.3.0 production-ready.
+  agent sandbox. The 0.3.1 AppArmor `/init rix` follow-up and the 0.3.0
+  schema-v3 migration are verified by source-level checks only, **not** on a
+  real install. Must be confirmed on the user's HA OS before making
+  production-readiness claims.
 - Nothing else is half-finished on this branch; the journal feature is
   complete against its acceptance criteria (see PR).
 
@@ -114,5 +114,6 @@ therefore `automated_tests`, never `integration_verified`.
 ## Next tasks
 
 See `docs/NEXT_STEPS.md` (prioritized, with dependencies and acceptance
-criteria). Highest priority: install 0.3.0 on real HA OS and verify the
-v2→v3 migration + panel on the existing `/data`.
+criteria). Highest priority: install 0.3.1 on real HA OS, verify the
+`/init rix` startup fix, and confirm the v2→v3 migration + panel on the
+existing `/data`.

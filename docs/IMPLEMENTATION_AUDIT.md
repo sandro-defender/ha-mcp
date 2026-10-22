@@ -12,21 +12,18 @@ was available in this environment.
 `agent_gateway/config.yaml` sets `init: false` (correct: the HA base image
 `ghcr.io/home-assistant/base:3.24` ships S6-Overlay v3 whose `/init` must be
 PID 1; `init: false` stops Supervisor adding Docker's own init). The base
-image `ENTRYPOINT ["/init"]` then runs and executes the Dockerfile
-`CMD ["/run.sh"]`. **But the add-on ships a custom `apparmor.txt`, which
-replaces Supervisor's default profile, and that profile granted execute
-permission only to `/run.sh`, Python, and helpers — no `/init`, `/package/**`,
-`/command/**`, or `/etc/cont-init.d/**` rules.** AppArmor therefore denied
-exec of `/init`, producing `/bin/sh: can't open '/init': Permission denied`
-before any application code ran. HA's developer documentation ("S6-Overlay
-3.x update on our docker base images") explicitly requires those rules in
-custom profiles. Fix (0.2.1): added the documented S6 block to
-`apparmor.txt`; regression tests in `tests/test_packaging.py`
-(`test_apparmor_permits_s6_init_entrypoint`,
-`test_container_startup_chain_is_init_then_run_sh`). `init: false` and the
-base image were **not** changed — they were already correct. Container/HA OS
-startup remains **Blocked by infrastructure** here (no Docker/Supervisor);
-CI's `docker/build-push-action` job builds amd64 but does not run it.
+image uses the S6 `/init` startup chain and Dockerfile `CMD ["/run.sh"]`.
+The custom `apparmor.txt` replaces Supervisor's default profile and must
+permit the entrypoint. The 0.2.1 fix added S6 execute rules, but a live 0.3.0
+installation still reported `/bin/sh: can't open '/init': Permission denied`.
+That exact shell error means `/bin/sh` was opening `/init` as a script and
+lacked **read** access; `/init ix` only granted inherited execution. Fix
+(0.3.1): `/init rix` grants read plus inherited execute access, with the
+regression assertion in `tests/test_packaging.py`
+(`test_apparmor_permits_s6_init_entrypoint`). `init: false` and the base image
+remain unchanged. This diagnosis is based on the reported runtime error;
+container/HA OS startup still needs live confirmation (no Docker/Supervisor in
+this environment).
 
 ## Capability audit
 
