@@ -224,6 +224,46 @@ const responses = {
       { name: "ha.call_service", group: "home_assistant", description: "Call service", risk: "write", scope: "ha:write", input_schema: {}, default_timeout_seconds: 20, default_max_output_bytes: 262144 },
     ],
   },
+  "journal/project-state": {
+    project: {
+      id: "default", name: "Smoke project", purpose: "Panel smoke stub",
+      architecture: "", conventions: "", constraints: "",
+      branch: "main", commit_sha: "0123456789abcdef", revision: 2,
+      created_at: now, updated_at: now,
+      updated_by: { actor_type: "agent", actor_id: "smoke-agent", session_id: null },
+    },
+    counts: {
+      tasks: { todo: 1, in_progress: 1, blocked: 0, completed: 0, failed: 0, cancelled: 0 },
+      open_issues: 0, open_security_issues: 0, open_bugs: 0, failed_approaches: 0,
+      entries: 1, unverified_entries: 1, decisions: 0, test_runs: 0, failed_test_runs: 0,
+      active_sessions: 0, handoffs: 0, last_activity_at: now,
+    },
+    next_tasks: [
+      {
+        id: "c".repeat(32), title: "Smoke task", description: "", status: "in_progress",
+        priority: 1, acceptance_criteria: "smoke passes", verification_level: "claimed",
+        verified: false, dependencies: [], blocked_by: [], owner_name: "smoke-agent",
+        owner_id: "smoke", branch: "main", commit_sha: null, files: [],
+        created_at: now, updated_at: now, completed_at: null,
+      },
+    ],
+    in_progress_tasks: [], blocked_tasks: [], recent_completed_tasks: [],
+    open_issues: [], recent_decisions: [], recent_test_runs: [], recent_entries: [],
+    active_sessions: [],
+  },
+  "journal/timeline": {
+    items: [
+      {
+        record_type: "entry", id: "d".repeat(32), title: "Smoke entry", body: "stub body",
+        status: "in_progress", kind: "progress", verification_level: "claimed", verified: false,
+        actor_type: "agent", actor_id: "smoke", actor_name: "smoke-agent", source: "rest",
+        session_id: null, task_id: null, commit_sha: null, files: [], created_at: now,
+        evidence: null,
+      },
+    ],
+    total: 1, limit: 50, offset: 0,
+  },
+  "journal/handoffs": { items: [], total: 0, limit: 10, offset: 0 },
   settings: {
     settings: { emergency_disabled: false, auto_unlock: false, enabled_tool_groups: ["home_assistant", "proxmox", "ssh"], audit_retention_days: 30, approval_ttl_seconds: 600, max_operation_timeout_seconds: 120, max_output_bytes: 262144 },
     defaults: {},
@@ -236,6 +276,12 @@ function lookup(url) {
   const key = path.replace(/\/$/, "");
   if (key.startsWith("agents/") && key.endsWith("/policy")) {
     return { document: { version: 1, rules: [] }, revision: 3 };
+  }
+  if (key === "journal/handoffs/generate") {
+    return { id: "e".repeat(32), title: "Smoke handoff", prompt: "# Continuation prompt\nSmoke stub prompt.", based_on_revision: 2, created_at: now };
+  }
+  if (key.startsWith("journal/handoffs/")) {
+    return { id: "e".repeat(32), title: "Smoke handoff", prompt: "# Continuation prompt\nLoaded stub prompt.", based_on_revision: 2, created_at: now };
   }
   return responses[key];
 }
@@ -284,7 +330,7 @@ async function run() {
   check("audit table caption", window.document.querySelector("caption") !== null);
   check("aria-sort present", window.document.querySelector("[aria-sort]") !== null);
 
-  for (const route of ["connections", "credentials", "tools", "permissions", "approvals", "audit", "settings"]) {
+  for (const route of ["connections", "credentials", "tools", "permissions", "approvals", "audit", "journal", "settings"]) {
     const button = window.document.querySelector(`[data-route="${route}"]`);
     check(`nav ${route} exists`, Boolean(button));
     button?.click();
@@ -332,6 +378,17 @@ async function run() {
   check("approve confirmation", window.document.querySelector("#modal").getAttribute("aria-hidden") === "false");
   check("approval shows params", text().includes("light.kitchen"));
   window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+
+  // Project Journal: state, timeline, handoff generation.
+  window.document.querySelector('[data-route="journal"]').click();
+  await tick(100);
+  check("journal project rendered", text().includes("Smoke project"));
+  check("journal next step", text().includes("Smoke task"));
+  check("journal timeline item", text().includes("Smoke entry"));
+  check("journal verification badge", text().includes("claimed"));
+  window.document.querySelector("#journal-handoff-form").dispatchEvent(new window.Event("submit"));
+  await tick(80);
+  check("journal handoff generated", window.document.querySelector("#journal-prompt").value.includes("Smoke stub prompt"));
 
   // Settings page renders vault controls.
   window.document.querySelector('[data-route="settings"]').click();

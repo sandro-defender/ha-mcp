@@ -113,6 +113,11 @@ Invoke-RestMethod -Method Post -Uri "http://homeassistant.local:8098/mcp" -Heade
 - `GET /api/v1/tools` — List tools permitted by the agent's scopes and enabled tool groups
 - `POST /api/v1/operations` — Execute a tool or request approval (`200 OK` on immediate read execution, `202 Accepted` with `approval_id` when human approval is required)
 - `GET /api/v1/approvals/{approval_id}` — Poll approval status (`pending`, `approved`, `rejected`, `expired`, `used`)
+- `/api/v1/journal/*` — Project Journal (requires `journal:read`/`journal:write` scopes **and** a `journal.*` policy rule): project state, sessions, tasks, timeline/search, work entries, decisions, issues, test runs, handoff generation. Mirrored as connectionless `journal.*` MCP tools. See `docs/JOURNAL.md` in the repository.
+
+### Project Journal (panel section)
+
+The **Project Journal** section shows the persistent work journal agents write through the API above: current project state, prioritized next steps, a filterable timeline that separates *claimed* work from *verified* evidence (`automated_tests` / `integration_verified`), failed and blocked work, test-run evidence, active sessions, and previous handoffs. **Generate Handoff Prompt** builds a bounded continuation prompt from the stored records; review/edit it in the panel, then copy it into the next agent session. The panel never displays sample data — an empty journal shows empty states. Journal records are redacted before storage, cannot be edited or deleted through the UI/API, and are retained in `/data/gateway.db` (included in add-on backups; not part of the vault export).
 
 ---
 

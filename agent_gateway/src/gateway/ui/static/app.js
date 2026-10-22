@@ -51,6 +51,8 @@
     network:
       '<rect x="9" y="3" width="6" height="6" rx="1.5"/><rect x="2" y="15" width="6" height="6" rx="1.5"/><rect x="16" y="15" width="6" height="6" rx="1.5"/><path d="M12 9v3M5 15v-3h14v3"/>',
     eye: '<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+    journal:
+      '<path d="M5 4a2 2 0 0 1 2-2h12v18H7a2 2 0 0 0-2 2z"/><path d="M5 20a2 2 0 0 1 2-2h12"/><path d="M16 2v6l-2.5-2L11 8V2"/>',
     spinner: '<path d="M12 3a9 9 0 1 0 9 9"/>',
   };
 
@@ -63,6 +65,7 @@
     ["permissions", "Permissions", "shield"],
     ["approvals", "Approvals", "approvals"],
     ["audit", "Audit Log", "audit"],
+    ["journal", "Project Journal", "journal"],
     ["updates", "Updates & Changelog", "refresh"],
     ["settings", "Settings & Diagnostics", "settings"],
   ];
@@ -76,6 +79,7 @@
     permissions: "Central policy documents, templates, and the live policy simulator.",
     approvals: "Single-use approvals bound to the exact operation, parameters, and policy revision.",
     audit: "Searchable, filterable audit trail with redaction and retention.",
+    journal: "Persistent agent work history: project state, verified evidence, failed approaches, and session handoffs.",
     updates: "Installed version, release history, migration notes, and update checks.",
     settings: "Theme, limits, vault lifecycle, health checks, and diagnostic exports.",
   };
@@ -103,6 +107,7 @@
     scopes: [],
     templates: {},
     approvals: [],
+    journalState: null,
     audit: { items: [], total: 0, sort: { key: "ts", direction: "desc" } },
     refreshTimer: null,
     modalOpen: false,
@@ -168,6 +173,17 @@
       revoked: "danger",
       disabled: "danger",
       error: "danger",
+      blocked: "warn",
+      in_progress: "info",
+      completed: "ok",
+      todo: "",
+      cancelled: "",
+      open: "warn",
+      resolved: "ok",
+      passed: "ok",
+      active: "info",
+      ended: "",
+      accepted: "ok",
     };
     const icons = {
       ok: "check",
@@ -635,6 +651,7 @@
       else if (route === "permissions") await viewPermissions();
       else if (route === "approvals") await viewApprovals();
       else if (route === "audit") await viewAudit();
+      else if (route === "journal") await viewJournal();
       else if (route === "updates") await viewUpdates();
       else if (route === "settings") await viewSettings();
     } catch (error) {
@@ -1946,6 +1963,8 @@
           <button type="button" class="button" data-size="sm" data-template="home_assistant_read_all">HA read-only</button>
           <button type="button" class="button" data-size="sm" data-template="proxmox_read_all">Proxmox read-only</button>
           <button type="button" class="button" data-size="sm" data-template="ssh_read">SSH read-only</button>
+          <button type="button" class="button" data-size="sm" data-template="journal_read">Journal read-only</button>
+          <button type="button" class="button" data-size="sm" data-template="journal_readwrite">Journal read/write</button>
           <button type="button" class="button" data-size="sm" data-template="deny">Deny all</button>
         </div>
         <form class="form" id="policy-form" novalidate>
@@ -2280,6 +2299,476 @@
       guarded(load);
     });
     await load();
+  }
+
+  /* ---------------------------------------------------------------- journal */
+
+  function verificationBadge(level, verified) {
+    if (!level) return "";
+    const tone = verified ? "ok" : level === "blocked_infrastructure" ? "warn" : "";
+    const glyph = verified ? icon("check", 13) : "";
+    return `<span class="badge"${tone ? ` data-tone="${tone}"` : ""}>${glyph}${esc(level)}</span>`;
+  }
+
+  function journalTaskItem(task) {
+    const blocked = task.blocked_by?.length
+      ? `<p class="list-item-meta">${icon("alert", 14)} Blocked by ${task.blocked_by.length} unfinished task(s)</p>`
+      : "";
+    const criteria = task.acceptance_criteria
+      ? `<p class="card-hint">Acceptance: ${esc(task.acceptance_criteria)}</p>`
+      : "";
+    return `<div class="list-item">
+      <div class="list-item-top">
+        <span class="list-item-title">${esc(task.title)}</span>
+        <span>${badge(`P${task.priority}`, "info")} ${statusBadge(task.status)} ${verificationBadge(task.verification_level, task.verified)}</span>
+      </div>
+      ${task.description ? `<p>${esc(task.description)}</p>` : ""}
+      ${criteria}${blocked}
+      <p class="list-item-meta">Owner ${esc(task.owner_name || task.owner_id)} · updated ${esc(fmtDate(task.updated_at))}${
+        task.commit_sha ? ` · <span class="mono">${esc(String(task.commit_sha).slice(0, 12))}</span>` : ""
+      }${task.branch ? ` · <span class="mono">${esc(task.branch)}</span>` : ""}</p>
+      ${task.files?.length ? `<p class="list-item-meta mono">${task.files.map((file) => esc(file)).join(" · ")}</p>` : ""}
+    </div>`;
+  }
+
+  function journalTimelineItem(item) {
+    let evidence = "";
+    if (item.record_type === "test_run" && item.evidence) {
+      evidence = `<div class="journal-evidence mono">$ ${esc(item.evidence.command)}<br>exit ${
+        item.evidence.exit_code ?? "—"
+      } · ${esc(item.evidence.environment || "environment not recorded")}${
+        item.evidence.run_at ? ` · ran ${esc(fmtDate(item.evidence.run_at))}` : ""
+      }</div>`;
+    } else if (item.record_type === "decision" && item.evidence?.rationale) {
+      evidence = `<p class="card-hint">Rationale: ${esc(item.evidence.rationale)}</p>`;
+    } else if (item.record_type === "issue" && item.evidence) {
+      evidence = `<p class="card-hint">Severity ${esc(item.evidence.severity)}${
+        item.evidence.learned ? ` · Learned: ${esc(item.evidence.learned)}` : ""
+      }</p>`;
+    }
+    const body = item.body
+      ? `<p>${esc(item.body.length > 600 ? `${item.body.slice(0, 600)}…` : item.body)}</p>`
+      : "";
+    return `<div class="list-item">
+      <div class="list-item-top">
+        <span class="list-item-title">${esc(item.title)}</span>
+        <span>${badge(item.record_type)} ${badge(item.kind)} ${statusBadge(item.status)} ${verificationBadge(item.verification_level, item.verified)}</span>
+      </div>
+      ${body}${evidence}
+      <p class="list-item-meta">${esc(item.actor_name || item.actor_id)} (${esc(item.actor_type)} via ${esc(
+        item.source
+      )}) · ${esc(fmtDate(item.created_at))} (${esc(relTime(item.created_at))})${
+        item.commit_sha ? ` · <span class="mono">${esc(String(item.commit_sha).slice(0, 12))}</span>` : ""
+      }</p>
+      ${item.files?.length ? `<p class="list-item-meta mono">${item.files.map((file) => esc(file)).join(" · ")}</p>` : ""}
+    </div>`;
+  }
+
+  async function viewJournal() {
+    let data;
+    try {
+      data = await api("journal/project-state");
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        $("#section").innerHTML = `<div class="card">${emptyState(
+          "Access denied",
+          "This Home Assistant user may not open the Project Journal. Ask an administrator to check the add-on admin allowlist.",
+          "lock"
+        )}</div>`;
+        return;
+      }
+      throw error;
+    }
+    state.journalState = data;
+    const project = data.project;
+    const counts = data.counts;
+    const taskOptions = (items) =>
+      items.map((task) => `<option value="${esc(task.id)}">${esc(task.title)}</option>`).join("");
+    const openTasks = [...(data.next_tasks || [])];
+
+    $("#section").innerHTML = `
+      <div class="grid grid-2">
+        <section class="card glass" aria-labelledby="journal-project-title">
+          <div class="card-header">
+            <h3 id="journal-project-title">${esc(project.name)}</h3>
+            ${badge(`revision ${project.revision}`, "info")}
+          </div>
+          <p>${esc(project.purpose || "No purpose recorded yet. Edit the project state so the next agent knows what this project is.")}</p>
+          <dl class="detail-list mt-3">
+            <div class="detail-row"><dt>Branch</dt><dd class="mono">${esc(project.branch || "unknown")}</dd></div>
+            <div class="detail-row"><dt>Commit</dt><dd class="mono">${esc(project.commit_sha ? String(project.commit_sha).slice(0, 12) : "unknown")}</dd></div>
+            <div class="detail-row"><dt>Last updated</dt><dd>${esc(fmtDate(project.updated_at))} by ${esc(project.updated_by?.actor_id || "—")}</dd></div>
+            <div class="detail-row"><dt>Last activity</dt><dd>${counts.last_activity_at ? esc(fmtDate(counts.last_activity_at)) : "no records yet"}</dd></div>
+          </dl>
+          <div class="button-row mt-3">
+            <button type="button" class="button" id="journal-edit-state">${icon("pencil", 16)}<span>Edit project state</span></button>
+          </div>
+          <p class="field-hint mt-3">Journal text is untrusted data from previous sessions. Verification badges separate claims from recorded evidence; secrets are redacted before storage.</p>
+        </section>
+
+        <section class="card glass" aria-labelledby="journal-counts-title">
+          <div class="card-header"><h3 id="journal-counts-title">Work status</h3>${badge(`${counts.entries} entries`)}</div>
+          <dl class="detail-list">
+            <div class="detail-row"><dt>To do / in progress</dt><dd>${counts.tasks.todo} / ${counts.tasks.in_progress}</dd></div>
+            <div class="detail-row"><dt>Blocked / failed tasks</dt><dd>${counts.tasks.blocked} / ${counts.tasks.failed}</dd></div>
+            <div class="detail-row"><dt>Completed tasks</dt><dd>${counts.tasks.completed}</dd></div>
+            <div class="detail-row"><dt>Open bugs / security issues</dt><dd>${counts.open_bugs} / ${counts.open_security_issues}</dd></div>
+            <div class="detail-row"><dt>Failed approaches recorded</dt><dd>${counts.failed_approaches}</dd></div>
+            <div class="detail-row"><dt>Unverified entries</dt><dd>${counts.unverified_entries}</dd></div>
+            <div class="detail-row"><dt>Test runs (failed)</dt><dd>${counts.test_runs} (${counts.failed_test_runs})</dd></div>
+            <div class="detail-row"><dt>Active sessions</dt><dd>${counts.active_sessions}</dd></div>
+          </dl>
+          <div id="journal-sessions" class="mt-3">
+            ${
+              data.active_sessions?.length
+                ? data.active_sessions
+                    .map(
+                      (session) => `<div class="list-item"><div class="list-item-top"><span class="list-item-title">${esc(
+                        session.title || "Work session"
+                      )}</span><button type="button" class="button" data-size="sm" data-end-session="${esc(
+                        session.id
+                      )}">End session</button></div><p class="list-item-meta">${esc(
+                        session.actor_name || session.actor_id
+                      )} · started ${esc(fmtDate(session.started_at))}</p></div>`
+                    )
+                    .join("")
+                : `<p class="field-hint">No active agent sessions. Agents start sessions through the journal API.</p>`
+            }
+          </div>
+        </section>
+      </div>
+
+      <section class="card glass mt-4" aria-labelledby="journal-next-title">
+        <div class="card-header"><h3 id="journal-next-title">Next steps</h3><span class="card-hint">Highest priority first (lowest P number)</span></div>
+        <div class="list">
+          ${
+            openTasks.length
+              ? openTasks.map(journalTaskItem).join("")
+              : emptyState("No open tasks", "Record the next task below, or let an agent create it through the journal API.", "journal")
+          }
+        </div>
+      </section>
+
+      <div class="grid grid-2 mt-4">
+        <section class="card glass" aria-labelledby="journal-record-title">
+          <div class="card-header"><h3 id="journal-record-title">Record work</h3>${badge("attributed to you", "info")}</div>
+          <form class="form" id="journal-entry-form">
+            <div class="field"><label for="journal-entry-title">Title</label>
+              <input id="journal-entry-title" required maxlength="200" autocomplete="off" placeholder="Verified the journal migration"></div>
+            <div class="form-row">
+              <div class="field"><label for="journal-entry-outcome">Outcome</label>
+                <select id="journal-entry-outcome">
+                  <option value="info">info</option><option value="in_progress">in_progress</option>
+                  <option value="completed">completed</option><option value="failed">failed</option>
+                  <option value="blocked">blocked</option>
+                </select></div>
+              <div class="field"><label for="journal-entry-level">Verification</label>
+                <select id="journal-entry-level">
+                  <option value="claimed">claimed (no evidence)</option>
+                  <option value="automated_tests">automated_tests</option>
+                  <option value="integration_verified">integration_verified</option>
+                  <option value="not_tested">not_tested</option>
+                  <option value="blocked_infrastructure">blocked_infrastructure</option>
+                </select></div>
+            </div>
+            <div class="field"><label for="journal-entry-task">Task (optional)</label>
+              <select id="journal-entry-task"><option value="">No task</option>${taskOptions(openTasks)}</select></div>
+            <div class="field"><label for="journal-entry-body">Details</label>
+              <textarea id="journal-entry-body" maxlength="8000" rows="4" placeholder="What happened, what evidence backs it, what remains. Never paste credentials."></textarea></div>
+            <div class="button-row"><button type="submit" class="button" data-variant="primary">${icon("plus", 16)}<span>Record entry</span></button></div>
+          </form>
+        </section>
+
+        <section class="card glass" aria-labelledby="journal-task-title">
+          <div class="card-header"><h3 id="journal-task-title">Add task</h3></div>
+          <form class="form" id="journal-task-form">
+            <div class="field"><label for="journal-new-task-title">Title</label>
+              <input id="journal-new-task-title" required maxlength="200" autocomplete="off" placeholder="Run the live HA OS install check"></div>
+            <div class="field"><label for="journal-new-task-priority">Priority (0 = highest)</label>
+              <input id="journal-new-task-priority" type="number" min="0" max="100" value="50"></div>
+            <div class="field"><label for="journal-new-task-criteria">Acceptance criteria</label>
+              <textarea id="journal-new-task-criteria" maxlength="4000" rows="3" placeholder="Exact checks that must pass before this counts as done"></textarea></div>
+            <div class="field"><label for="journal-new-task-description">Description</label>
+              <textarea id="journal-new-task-description" maxlength="8000" rows="3"></textarea></div>
+            <div class="button-row"><button type="submit" class="button" data-variant="primary">${icon("plus", 16)}<span>Add task</span></button></div>
+          </form>
+        </section>
+      </div>
+
+      <section class="card glass mt-4" aria-labelledby="journal-timeline-title">
+        <div class="card-header"><h3 id="journal-timeline-title">Activity timeline <span class="card-hint" id="journal-timeline-count"></span></h3></div>
+        <form class="form" id="journal-filters">
+          <div class="form-row">
+            <div class="field"><label for="journal-q">Search</label>
+              <input id="journal-q" autocomplete="off" placeholder="task, decision, issue, command…"></div>
+            <div class="field"><label for="journal-category">Category</label>
+              <select id="journal-category">
+                <option value="">All work</option><option value="completed">completed</option>
+                <option value="failed">failed</option><option value="blocked">blocked</option>
+                <option value="unverified">unverified</option>
+              </select></div>
+            <div class="field"><label for="journal-type">Record type</label>
+              <select id="journal-type">
+                <option value="">All types</option><option value="entry">work entries</option>
+                <option value="decision">decisions</option><option value="issue">issues &amp; failed approaches</option>
+                <option value="test_run">test runs</option>
+              </select></div>
+            <div class="field"><label for="journal-commit">Commit</label>
+              <input id="journal-commit" autocomplete="off" class="mono" placeholder="0123abcd…"></div>
+          </div>
+          <div class="button-row">
+            <button type="submit" class="button" data-variant="primary">${icon("search", 16)}<span>Apply filters</span></button>
+            <button type="button" class="button" data-variant="ghost" id="journal-clear-filters">Clear</button>
+          </div>
+        </form>
+        <div id="journal-timeline" class="list mt-4" aria-live="polite"></div>
+      </section>
+
+      <section class="card glass mt-4" aria-labelledby="journal-handoff-title">
+        <div class="card-header"><h3 id="journal-handoff-title">Session handoff</h3><span class="card-hint">Preview and edit before copying. Nothing is executed automatically.</span></div>
+        <form class="form" id="journal-handoff-form">
+          <div class="field"><label for="journal-focus-task">Focus task (optional)</label>
+            <select id="journal-focus-task"><option value="">Highest-priority open task</option>${taskOptions(openTasks)}</select></div>
+          <div class="button-row">
+            <button type="submit" class="button" data-variant="primary" id="journal-generate">${icon("terminal", 16)}<span>Generate Handoff Prompt</span></button>
+            <button type="button" class="button" id="journal-copy" disabled>${icon("copy", 16)}<span>Copy prompt</span></button>
+          </div>
+        </form>
+        <div class="field mt-3"><label for="journal-prompt">Handoff prompt</label>
+          <textarea id="journal-prompt" class="journal-prompt mono" rows="14" spellcheck="false" placeholder="Generate a handoff to preview it here. You can edit the text before copying."></textarea></div>
+        <div id="journal-handoffs" class="list mt-3"></div>
+      </section>`;
+
+    const loadTimeline = async () => {
+      const params = new URLSearchParams({ limit: "50" });
+      const q = $("#journal-q").value.trim();
+      const category = $("#journal-category").value;
+      const type = $("#journal-type").value;
+      const commit = $("#journal-commit").value.trim();
+      if (q) params.set("q", q);
+      if (category) params.set("category", category);
+      if (type) params.set("record_type", type);
+      if (commit) params.set("commit_sha", commit);
+      const results = $("#journal-timeline");
+      results.innerHTML = skeleton(2);
+      const timeline = await api(`journal/timeline?${params.toString()}`);
+      const count = $("#journal-timeline-count");
+      if (count) count.textContent = `(${timeline.total})`;
+      results.innerHTML = timeline.items.length
+        ? timeline.items.map(journalTimelineItem).join("")
+        : emptyState(
+            "No journal records match",
+            "Nothing is stored for this filter yet. Agents record work through the journal API; this panel never invents entries.",
+            "journal"
+          );
+    };
+
+    const loadHandoffs = async () => {
+      const box = $("#journal-handoffs");
+      const listing = await api("journal/handoffs?limit=10");
+      box.innerHTML = listing.items.length
+        ? `<p class="field-hint">Previous handoffs</p>` +
+          listing.items
+            .map(
+              (handoff) => `<div class="list-item"><div class="list-item-top"><span class="list-item-title">${esc(
+                handoff.title || "Session handoff"
+              )}</span><button type="button" class="button" data-size="sm" data-load-handoff="${esc(
+                handoff.id
+              )}">Load</button></div><p class="list-item-meta">${esc(
+                handoff.actor_name || handoff.actor_id
+              )} · ${esc(fmtDate(handoff.created_at))} · based on revision ${esc(handoff.based_on_revision)}</p></div>`
+            )
+            .join("")
+        : `<p class="field-hint">No handoffs generated yet.</p>`;
+      $$("[data-load-handoff]", box).forEach((button) =>
+        button.addEventListener("click", () =>
+          withBusy(button, () =>
+            guarded(async () => {
+              const handoff = await api(`journal/handoffs/${button.dataset.loadHandoff}`);
+              $("#journal-prompt").value = handoff.prompt;
+              $("#journal-copy").disabled = false;
+              toast("Handoff loaded. Review it before copying.");
+            })
+          )
+        )
+      );
+    };
+
+    $("#journal-filters").addEventListener("submit", (event) => {
+      event.preventDefault();
+      guarded(loadTimeline);
+    });
+    $("#journal-clear-filters").addEventListener("click", () => {
+      $("#journal-q").value = "";
+      $("#journal-category").value = "";
+      $("#journal-type").value = "";
+      $("#journal-commit").value = "";
+      guarded(loadTimeline);
+    });
+
+    $("#journal-entry-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      guarded(async () => {
+        const title = $("#journal-entry-title").value.trim();
+        if (!title) {
+          fieldError($("#journal-entry-title"), "A title is required.");
+          return;
+        }
+        const taskId = $("#journal-entry-task").value;
+        await api("journal/entries", {
+          method: "POST",
+          body: {
+            title,
+            outcome: $("#journal-entry-outcome").value,
+            verification_level: $("#journal-entry-level").value,
+            task_id: taskId || null,
+            body: $("#journal-entry-body").value.trim(),
+          },
+        });
+        toast("Work entry recorded.");
+        await navigate("journal");
+      });
+    });
+
+    $("#journal-task-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      guarded(async () => {
+        const title = $("#journal-new-task-title").value.trim();
+        if (!title) {
+          fieldError($("#journal-new-task-title"), "A title is required.");
+          return;
+        }
+        await api("journal/tasks", {
+          method: "POST",
+          body: {
+            title,
+            priority: Number($("#journal-new-task-priority").value || 50),
+            acceptance_criteria: $("#journal-new-task-criteria").value.trim(),
+            description: $("#journal-new-task-description").value.trim(),
+          },
+        });
+        toast("Task added to Next steps.");
+        await navigate("journal");
+      });
+    });
+
+    $$("[data-end-session]", $("#section")).forEach((button) =>
+      button.addEventListener("click", () =>
+        withBusy(button, () =>
+          guarded(async () => {
+            const confirmed = await confirmAction({
+              title: "End this agent session?",
+              message: "The session is marked ended in the journal. Its records stay unchanged.",
+              confirmLabel: "End session",
+            });
+            if (!confirmed) return;
+            await api(`journal/sessions/${button.dataset.endSession}/end`, {
+              method: "POST",
+              body: { summary: "Ended by administrator from the panel" },
+            });
+            toast("Session ended.");
+            await navigate("journal");
+          })
+        )
+      )
+    );
+
+    $("#journal-edit-state").addEventListener("click", () => openJournalStateEditor(project));
+
+    $("#journal-handoff-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const button = $("#journal-generate");
+      withBusy(button, () =>
+        guarded(async () => {
+          const focus = $("#journal-focus-task").value;
+          const handoff = await api("journal/handoffs/generate", {
+            method: "POST",
+            body: focus ? { focus_task_id: focus } : {},
+          });
+          $("#journal-prompt").value = handoff.prompt;
+          $("#journal-copy").disabled = false;
+          toast("Handoff generated from stored records. Review before use.");
+          await loadHandoffs();
+        })
+      );
+    });
+
+    $("#journal-copy").addEventListener("click", (event) => {
+      const button = event.currentTarget;
+      withBusy(button, async () => {
+        const prompt = $("#journal-prompt").value;
+        if (!prompt.trim()) {
+          toast("Generate or load a handoff first.", "danger");
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(prompt);
+          toast("Handoff prompt copied.");
+        } catch {
+          $("#journal-prompt").select();
+          toast("Clipboard unavailable; the prompt is selected for manual copy.", "danger");
+        }
+      });
+    });
+
+    await loadTimeline();
+    await loadHandoffs();
+  }
+
+  function openJournalStateEditor(project) {
+    openModal({
+      title: "Edit project state",
+      body: `<form class="form" id="journal-state-form">
+        <div class="field"><label for="js-name">Project name</label>
+          <input id="js-name" maxlength="200" value="${esc(project.name)}"></div>
+        <div class="field"><label for="js-purpose">Purpose</label>
+          <textarea id="js-purpose" maxlength="4000" rows="3">${esc(project.purpose)}</textarea></div>
+        <div class="field"><label for="js-architecture">Architecture</label>
+          <textarea id="js-architecture" maxlength="4000" rows="3">${esc(project.architecture)}</textarea></div>
+        <div class="field"><label for="js-conventions">Conventions</label>
+          <textarea id="js-conventions" maxlength="4000" rows="3">${esc(project.conventions)}</textarea></div>
+        <div class="field"><label for="js-constraints">Security &amp; operating constraints</label>
+          <textarea id="js-constraints" maxlength="4000" rows="3">${esc(project.constraints)}</textarea></div>
+        <div class="form-row">
+          <div class="field"><label for="js-branch">Branch</label>
+            <input id="js-branch" maxlength="128" class="mono" value="${esc(project.branch || "")}"></div>
+          <div class="field"><label for="js-commit">Commit (hex)</label>
+            <input id="js-commit" maxlength="64" class="mono" value="${esc(project.commit_sha || "")}"></div>
+        </div>
+        <p class="field-hint">Saved with revision checking: if an agent updated the state meanwhile, this save is rejected instead of overwriting it.</p>
+      </form>`,
+      actions: [
+        { label: "Cancel", variant: "ghost", onClick: () => closeModal() },
+        {
+          label: "Save project state",
+          variant: "primary",
+          icon: "check",
+          onClick: (button) =>
+            withBusy(button, () =>
+              guarded(async () => {
+                const branch = $("#js-branch").value.trim();
+                const commit = $("#js-commit").value.trim();
+                await api("journal/project-state", {
+                  method: "PUT",
+                  body: {
+                    expected_revision: project.revision,
+                    name: $("#js-name").value.trim(),
+                    purpose: $("#js-purpose").value.trim(),
+                    architecture: $("#js-architecture").value.trim(),
+                    conventions: $("#js-conventions").value.trim(),
+                    constraints_text: $("#js-constraints").value.trim(),
+                    branch: branch || null,
+                    commit_sha: commit || null,
+                  },
+                });
+                closeModal();
+                toast("Project state saved.");
+                await navigate("journal");
+              })
+            ),
+        },
+      ],
+    });
   }
 
   /* --------------------------------------------------------------- settings */

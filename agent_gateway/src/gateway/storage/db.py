@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -130,6 +130,211 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- --------------------------------------------------------------------------
+-- Project Journal (schema v3).  Every record is scoped to a project, carries
+-- the actor that created it (agent or admin), and is immutable after creation
+-- except for the documented task/issue/session status transitions.  Work
+-- records carry a verification level so an agent claim is never stored as if
+-- it were verified evidence.  Idempotency keys are unique per actor so a
+-- retried request returns the original record instead of duplicating it.
+-- --------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS journal_projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    purpose TEXT NOT NULL DEFAULT '',
+    architecture TEXT NOT NULL DEFAULT '',
+    conventions TEXT NOT NULL DEFAULT '',
+    constraints_text TEXT NOT NULL DEFAULT '',
+    branch TEXT,
+    commit_sha TEXT,
+    revision INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    updated_by_type TEXT NOT NULL DEFAULT 'system',
+    updated_by_id TEXT NOT NULL DEFAULT '',
+    updated_session_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS journal_sessions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES journal_projects(id),
+    actor_type TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    actor_name TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
+    branch TEXT,
+    commit_sha TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    summary TEXT NOT NULL DEFAULT '',
+    idempotency_key TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(actor_type, actor_id, idempotency_key)
+);
+
+CREATE TABLE IF NOT EXISTS journal_tasks (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES journal_projects(id),
+    session_id TEXT REFERENCES journal_sessions(id),
+    owner_type TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    owner_name TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'todo',
+    priority INTEGER NOT NULL DEFAULT 50,
+    acceptance_criteria TEXT NOT NULL DEFAULT '',
+    verification_level TEXT NOT NULL DEFAULT 'claimed',
+    branch TEXT,
+    commit_sha TEXT,
+    files TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    idempotency_key TEXT,
+    UNIQUE(owner_type, owner_id, idempotency_key)
+);
+
+CREATE TABLE IF NOT EXISTS journal_task_dependencies (
+    task_id TEXT NOT NULL REFERENCES journal_tasks(id) ON DELETE CASCADE,
+    depends_on_task_id TEXT NOT NULL REFERENCES journal_tasks(id) ON DELETE CASCADE,
+    PRIMARY KEY (task_id, depends_on_task_id)
+);
+
+CREATE TABLE IF NOT EXISTS journal_entries (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES journal_projects(id),
+    session_id TEXT REFERENCES journal_sessions(id),
+    task_id TEXT REFERENCES journal_tasks(id),
+    actor_type TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    actor_name TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'rest',
+    kind TEXT NOT NULL DEFAULT 'note',
+    title TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    outcome TEXT NOT NULL DEFAULT 'info',
+    verification_level TEXT NOT NULL DEFAULT 'claimed',
+    files TEXT NOT NULL DEFAULT '[]',
+    commit_sha TEXT,
+    branch TEXT,
+    created_at TEXT NOT NULL,
+    idempotency_key TEXT,
+    UNIQUE(actor_type, actor_id, idempotency_key)
+);
+
+CREATE TABLE IF NOT EXISTS journal_decisions (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES journal_projects(id),
+    session_id TEXT REFERENCES journal_sessions(id),
+    task_id TEXT REFERENCES journal_tasks(id),
+    actor_type TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    actor_name TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'rest',
+    title TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    rationale TEXT NOT NULL DEFAULT '',
+    alternatives TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'accepted',
+    files TEXT NOT NULL DEFAULT '[]',
+    commit_sha TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    idempotency_key TEXT,
+    UNIQUE(actor_type, actor_id, idempotency_key)
+);
+
+CREATE TABLE IF NOT EXISTS journal_issues (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES journal_projects(id),
+    session_id TEXT REFERENCES journal_sessions(id),
+    task_id TEXT REFERENCES journal_tasks(id),
+    actor_type TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    actor_name TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'rest',
+    kind TEXT NOT NULL DEFAULT 'bug',
+    title TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    learned TEXT NOT NULL DEFAULT '',
+    severity TEXT NOT NULL DEFAULT 'medium',
+    status TEXT NOT NULL DEFAULT 'open',
+    verification_level TEXT NOT NULL DEFAULT 'claimed',
+    files TEXT NOT NULL DEFAULT '[]',
+    commit_sha TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    resolved_at TEXT,
+    idempotency_key TEXT,
+    UNIQUE(actor_type, actor_id, idempotency_key)
+);
+
+CREATE TABLE IF NOT EXISTS journal_test_runs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES journal_projects(id),
+    session_id TEXT REFERENCES journal_sessions(id),
+    task_id TEXT REFERENCES journal_tasks(id),
+    actor_type TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    actor_name TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'rest',
+    command TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'passed',
+    exit_code INTEGER,
+    verification_level TEXT NOT NULL DEFAULT 'claimed',
+    output_summary TEXT NOT NULL DEFAULT '',
+    environment TEXT NOT NULL DEFAULT '',
+    commit_sha TEXT,
+    run_at TEXT,
+    duration_seconds REAL,
+    created_at TEXT NOT NULL,
+    idempotency_key TEXT,
+    UNIQUE(actor_type, actor_id, idempotency_key)
+);
+
+CREATE TABLE IF NOT EXISTS journal_handoffs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES journal_projects(id),
+    session_id TEXT REFERENCES journal_sessions(id),
+    focus_task_id TEXT REFERENCES journal_tasks(id),
+    actor_type TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    actor_name TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'rest',
+    title TEXT NOT NULL DEFAULT '',
+    prompt TEXT NOT NULL,
+    branch TEXT,
+    commit_sha TEXT,
+    based_on_revision INTEGER NOT NULL DEFAULT 1,
+    included TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    idempotency_key TEXT,
+    UNIQUE(actor_type, actor_id, idempotency_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_journal_sessions_project
+    ON journal_sessions(project_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_journal_tasks_project
+    ON journal_tasks(project_id, status, priority, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_journal_entries_project
+    ON journal_entries(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_journal_entries_task
+    ON journal_entries(task_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_journal_decisions_project
+    ON journal_decisions(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_journal_issues_project
+    ON journal_issues(project_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_journal_test_runs_project
+    ON journal_test_runs(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_journal_test_runs_task
+    ON journal_test_runs(task_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_journal_handoffs_project
+    ON journal_handoffs(project_id, created_at DESC);
 """
 
 
@@ -160,6 +365,7 @@ class Database:
         row = self._conn.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()
         if row is None:
             self._ensure_v2_columns()
+            self._ensure_v3_tables()
             self._conn.execute(
                 "INSERT INTO schema_meta(key, value) VALUES('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
@@ -175,6 +381,7 @@ class Database:
             raise RuntimeError("database schema is newer than this gateway release")
         if current_version < SCHEMA_VERSION:
             self._ensure_v2_columns()
+            self._ensure_v3_tables()
             self._conn.execute(
                 "INSERT OR REPLACE INTO schema_meta(key, value) VALUES('migrated_from', ?)",
                 (str(current_version),),
@@ -189,6 +396,36 @@ class Database:
             )
         else:
             self._ensure_v2_columns()
+            self._ensure_v3_tables()
+
+    def _ensure_v3_tables(self) -> None:
+        """Verify the Project Journal tables exist (schema v3).
+
+        The tables are created by ``SCHEMA`` (``CREATE TABLE IF NOT EXISTS``)
+        before this runs, so an upgrade from v1/v2 only adds new tables and
+        never touches existing records.  This guard exists so a database whose
+        journal tables were manually dropped fails closed with a clear error
+        instead of erroring later inside a request handler.
+        """
+
+        expected = {
+            "journal_projects",
+            "journal_sessions",
+            "journal_tasks",
+            "journal_task_dependencies",
+            "journal_entries",
+            "journal_decisions",
+            "journal_issues",
+            "journal_test_runs",
+            "journal_handoffs",
+        }
+        rows = self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'journal_%'"
+        ).fetchall()
+        present = {str(r["name"]) for r in rows}
+        missing = expected - present
+        if missing:
+            raise RuntimeError("database is missing Project Journal tables: " + ", ".join(sorted(missing)))
 
     def _ensure_v2_columns(self) -> None:
         agent_cols = {str(r["name"]) for r in self._conn.execute("PRAGMA table_info(agents)").fetchall()}

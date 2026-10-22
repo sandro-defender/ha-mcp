@@ -4,7 +4,7 @@
 
 > Policy-controlled gateway for AI agents to operate Home Assistant, Proxmox VE, and restricted SSH targets — without ever receiving credentials.
 
-[![version](https://img.shields.io/badge/version-0.2.1-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.3.0-blue)](CHANGELOG.md)
 [![architectures](https://img.shields.io/badge/arch-amd64%20%7C%20aarch64-lightgrey)](agent_gateway/config.yaml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -24,13 +24,13 @@ A **Home Assistant OS add-on** that sits between external AI coding agents (Clau
 - **Credentials stay in an AES-256-GCM + Argon2id vault** inside `/data`. They are never returned to agents, never appear in the UI after saving, and never enter logs or error messages.
 - **Deny-by-default policies, single-use approvals, and a redacted audit log** make every operation reviewable.
 
-Project status: **0.2.1 — implemented and locally tested.** It has not been installed on a live Home Assistant OS system, has not been exercised against real Home Assistant/Proxmox/SSH targets in this environment, and has not been security-audited. See [Verification log](#verification-log) and [`docs/SECURITY.md`](docs/SECURITY.md).
+Project status: **0.3.0 — implemented and locally tested.** It has not been installed on a live Home Assistant OS system, has not been exercised against real Home Assistant/Proxmox/SSH targets in this environment, and has not been security-audited. See [Verification log](#verification-log) and [`docs/SECURITY.md`](docs/SECURITY.md).
 
 ---
 
-## Operational workspace — 10 dedicated sections
+## Operational workspace — 11 dedicated sections
 
-The Ingress management panel (vanilla JS + CSS, no build step, strict CSP, offline, responsive) is organized into **10 sections**:
+The Ingress management panel (vanilla JS + CSS, no build step, strict CSP, offline, responsive) is organized into **11 sections**:
 
 | Section | What you do there |
 | :--- | :--- |
@@ -42,6 +42,7 @@ The Ingress management panel (vanilla JS + CSS, no build step, strict CSP, offli
 | **Permissions** | Visual allow/deny rule builder, starter templates, raw JSON policy editor, **interactive Policy Simulator** (`POST /api/admin/policies/evaluate`) |
 | **Approvals** | Single-use, expiring, parameter-bound approvals with SHA-256 binding and policy re-validation |
 | **Audit Log** | Searchable, filterable SQLite WAL audit trail with redaction, retention, and detail inspection |
+| **Project Journal** | Persistent AI agent work journal: project state, prioritized tasks with dependencies, chronological timeline with verification levels (claimed vs evidenced), decisions, failed approaches, test evidence, sessions, and a **Generate Handoff Prompt** action with editable preview + copy |
 | **Updates & Changelog** | Installed vs latest version, on-demand cached GitHub release check, post-update notice & migration notes, Keep-a-Changelog history |
 | **Settings & Diagnostics** | Theme selector (System/Light/Dark), TTL/retention bounds, readiness probes (`/readyz`), redacted diagnostic bundle export |
 
@@ -112,7 +113,7 @@ Network: `8098/tcp` is **`null` (not published)** by default; expose it on a tru
 4. **Agents & Permissions**: create an identity per client (`windows-claude-desktop`), copy the `hag_…` token once, assign scopes and policy rules, and dry-run with the **Policy Simulator**.
 5. **Agent listener**: expose `8098/tcp` on the host for your LAN/VPN only if needed. Never port-forward `8098` or `8099` to the public internet.
 
-Upgrade, backup, and recovery are documented in [`docs/VAULT_RECOVERY.md`](docs/VAULT_RECOVERY.md) and [`agent_gateway/DOCS.md`](agent_gateway/DOCS.md). The SQLite schema migrates automatically (`v1 → v2` adds `connections.last_ok_at`, `connections.last_check_detail`, `agents.last_rotated_at`).
+Upgrade, backup, and recovery are documented in [`docs/VAULT_RECOVERY.md`](docs/VAULT_RECOVERY.md) and [`agent_gateway/DOCS.md`](agent_gateway/DOCS.md). The SQLite schema migrates automatically (`v1 → v2` adds `connections.last_ok_at`, `connections.last_check_detail`, `agents.last_rotated_at`; `v2 → v3` adds the `journal_*` Project Journal tables without touching existing records).
 
 ---
 
@@ -183,6 +184,8 @@ Every REST and MCP call is authorized by the same `PolicyService` and emits a re
 
 `hassio`, `homeassistant`, `shell_command`, `command_line`, `python_script`, `recorder` service domains are hard-blocked. Proxmox write operations and arbitrary shell do not exist (SSH `run_template` is template-only with allowlisted `argv` vectors).
 
+Agents granted the `journal:read`/`journal:write` scopes and a `journal.*` policy rule additionally get **Project Journal** access — REST under `/api/v1/journal/*` and connectionless MCP tools (`journal.read_project_state`, `journal.record_work`, `journal.record_test_run`, `journal.generate_handoff`, …) through the same scope + policy + rate-limit + audit path. Journal records are redacted, immutable, and never grant permission to execute anything. See [`docs/JOURNAL.md`](docs/JOURNAL.md) and [`AGENTS.md`](AGENTS.md).
+
 ---
 
 ## Releases, changelog, and diagnostics
@@ -205,7 +208,7 @@ python3 -m venv .venv
 .venv/bin/ruff check agent_gateway/src agent_gateway/tests
 .venv/bin/ruff format --check agent_gateway/src agent_gateway/tests
 (cd agent_gateway && ../.venv/bin/mypy src)
-.venv/bin/pytest -q                 # 207 tests
+.venv/bin/pytest -q                 # 253 tests
 node --check agent_gateway/src/gateway/ui/static/app.js
 
 # run the gateway locally (development only)
@@ -232,7 +235,8 @@ CI: `lint + type-check + test` → `static UI checks` → `amd64 image build`. R
 | Check | Result |
 | :--- | :--- |
 | `ruff check` / `ruff format --check` / `mypy --strict` | pass |
-| `pytest -q` | **211 passed** (incl. AppArmor/`/init` startup regression, concurrent-approval, expired-token tests) |
+| `pytest -q` | **253 passed** (incl. AppArmor/`/init` startup regression, concurrent-approval, expired-token, and 42 Project Journal tests: persistence, task transitions/dependencies, idempotency, redaction, cross-agent authorization, handoff generation, MCP parity) |
+| Journal socket E2E (dev instance on `:18098/:18099`) | pass — agent session/tasks/test-run/handoff over real HTTP, process restart, records and handoff re-read from `/tmp` data dir; jsdom panel smoke (`tools/ui-smoke`) incl. journal checks pass |
 | `node --check app.js` + `grep` for inline scripts / remote assets | pass |
 | Add-on image build (CI, `linux/amd64`) | pass in CI; not runnable in this sandbox (no Docker daemon) — the 0.2.1 `/init` AppArmor fix is covered by packaging regression tests pending live HA OS confirmation |
 | Live HA OS deployment / real HA/Proxmox/SSH targets / MCP client E2E | **not run** (no lab in this environment) |

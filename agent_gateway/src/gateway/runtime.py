@@ -20,6 +20,7 @@ from .connectors.home_assistant import HARD_DENIED_SERVICE_DOMAINS, HomeAssistan
 from .connectors.proxmox import ProxmoxClient
 from .connectors.ssh import scan_host_key
 from .errors import GatewayError, NotFoundError, ValidationFailure
+from .journal.service import JournalService
 from .operations import OperationService
 from .policy.engine import PolicyService
 from .policy.models import PolicyRequest
@@ -198,6 +199,7 @@ class Runtime:
         self.connections = ConnectionService(self.db, self.vault, settings.ssh_known_hosts_path)
         self.tools = ToolRegistry(self.settings_store)
         self.approvals = ApprovalService(self.db)
+        self.journal = JournalService(self.db)
         self.audit = AuditService(self.db)
         self.releases = ReleaseService(self.db)
         self.rate_limiter = SlidingWindowLimiter()

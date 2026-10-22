@@ -18,6 +18,8 @@ from ..runtime import Runtime
 from .admin import router as admin_router
 from .agent import router as agent_router
 from .errors import register_exception_handlers
+from .journal import admin_router as journal_admin_router
+from .journal import agent_router as journal_agent_router
 from .middleware import (
     AccessLogMiddleware,
     AdminGateMiddleware,
@@ -57,6 +59,7 @@ def build_admin_app(runtime: Runtime) -> FastAPI:
     app.add_middleware(AccessLogMiddleware)
     app.add_middleware(RequestContextMiddleware)
     app.include_router(admin_router)
+    app.include_router(journal_admin_router)
 
     @app.get("/healthz", include_in_schema=False)
     def healthz() -> dict[str, str]:
@@ -116,6 +119,7 @@ def build_agent_app(runtime: Runtime) -> FastAPI:
     app.add_middleware(AccessLogMiddleware)
     app.add_middleware(RequestContextMiddleware)
     app.include_router(agent_router)
+    app.include_router(journal_agent_router)
 
     @app.get("/healthz", include_in_schema=False)
     def healthz() -> dict[str, str]:

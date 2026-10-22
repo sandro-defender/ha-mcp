@@ -213,3 +213,61 @@ def test_markup_avoids_inline_styles_blocked_by_csp() -> None:
 def test_viewport_allows_zoom() -> None:
     assert "user-scalable=no" not in HTML
     assert "maximum-scale" not in HTML
+
+
+def _journal_view_source() -> str:
+    start = JS.index("async function viewJournal()")
+    end = JS.index("function openJournalStateEditor")
+    return JS[start:end]
+
+
+def test_project_journal_section_is_wired_to_real_endpoints() -> None:
+    assert '["journal", "Project Journal", "journal"]' in JS
+    assert 'route === "journal"' in JS
+    view = _journal_view_source()
+    assert 'api("journal/project-state")' in view
+    assert "journal/timeline?" in view
+    assert 'api("journal/handoffs/generate"' in view
+    assert 'api("journal/entries"' in view
+    assert 'api("journal/tasks"' in view
+
+
+def test_journal_ui_supports_handoff_preview_edit_and_copy() -> None:
+    view = _journal_view_source()
+    assert "Generate Handoff Prompt" in view
+    assert 'id="journal-prompt"' in view  # editable textarea, not auto-executed
+    assert "navigator.clipboard.writeText" in view
+    assert "Nothing is executed automatically" in view
+    assert "data-load-handoff" in view
+
+
+def test_journal_ui_separates_claims_from_verified_evidence() -> None:
+    assert "function verificationBadge(" in JS
+    view = _journal_view_source()
+    for level in (
+        "claimed",
+        "automated_tests",
+        "integration_verified",
+        "not_tested",
+        "blocked_infrastructure",
+    ):
+        assert level in view
+    assert 'value="unverified"' in view
+    assert "journal-evidence" in CSS
+
+
+def test_journal_ui_has_empty_and_permission_denied_states() -> None:
+    view = _journal_view_source()
+    assert "emptyState(" in view
+    assert "Access denied" in view
+    assert "No journal records match" in view
+    assert "No open tasks" in view
+
+
+def test_journal_ui_contains_no_hardcoded_example_records() -> None:
+    view = _journal_view_source()
+    # Lists come only from same-origin API responses, never from literals.
+    assert "api(" in view
+    for fake in ("Lorem", "Example task", "Sample entry", "mock entry", "seeded"):
+        assert fake not in view
+    assert "items.map(journalTimelineItem)" in view

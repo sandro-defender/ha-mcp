@@ -86,6 +86,7 @@ agent_gateway/src/gateway/
 ├── auth/              tokens, rate limiting, agent service
 ├── policy/            document schema and the evaluation engine
 ├── operations.py      the single execution path for REST and MCP
+├── journal/           Project Journal: service, models, handoff builder, MCP tools
 ├── approvals/         single-use, expiring, parameter-bound approvals
 ├── audit/             redacted audit log
 ├── connectors/        Home Assistant, Proxmox VE, SSH (known hosts, argv)
@@ -100,7 +101,7 @@ Tests live in `agent_gateway/tests/`; the root `pytest.ini` mirrors the
 
 ## Test coverage and gaps
 
-Covered (207 tests): vault crypto/lifecycle/rotation/export, corrupt-file
+Covered (253 tests): vault crypto/lifecycle/rotation/export, corrupt-file
 handling, policy evaluation and deny rules, approvals (single use, expiry,
 binding), redaction, settings parsing, the admin gate/CSRF/origin checks, body
 limits, agent auth throttling and header handling, credential and connection
@@ -126,6 +127,7 @@ invariants.
 | `test_settings.py` | options/env parsing and validation |
 | `test_packaging.py` | add-on metadata, ports, options, Dockerfile, AppArmor |
 | `test_ui_assets.py` | design tokens, contrast, focus, ARIA, CSP-safety |
+| `test_journal.py` | schema v3 migration/recovery, restart persistence, task transitions & dependencies, idempotency, search/pagination, claim vs verified separation, redaction, cross-agent authorization, policy/rate-limit enforcement, handoff generation, admin/agent/MCP parity |
 
 Not covered, and why:
 
