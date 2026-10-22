@@ -121,7 +121,10 @@ not pretend otherwise. Responses include a derived `verified` boolean
   actions. Read successes are not audited (they would drown the log);
   handoff generation is a write and is always audited.
 - A journal record is data, never authority: nothing in the journal can
-  approve an operation, alter a policy, or unlock the vault.
+  approve an operation, alter a policy, or unlock the vault. Agents also
+  have no gateway API to modify the persistent instruction files
+  (`AGENTS.md`, `docs/PROJECT_STATE.md`, …) — those live in the repository
+  and change only through reviewed commits.
 
 ## API reference (agent, `/api/v1/journal`)
 

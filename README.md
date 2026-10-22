@@ -61,7 +61,7 @@ Windows/macOS/Linux — AI agent / MCP client
             ▼
 Home Assistant Agent Gateway add-on
   Management :8099 (Ingress only, Supervisor peer + X-Gateway-Request: 1)
-  Agent      :8098 (REST /api/v1 + MCP /mcp, 12 tools, same policy engine)
+  Agent      :8098 (REST /api/v1 + MCP /mcp, 12 connector tools + Project Journal, same policy engine)
   Vault → Policy → Approval → Connectors → Audit
             │
             ├── Home Assistant REST  (HASS token, TLS verified)
