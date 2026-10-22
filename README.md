@@ -86,6 +86,8 @@ Supported architectures: **amd64**, **aarch64**. See `agent_gateway/config.yaml`
 
 `icon.png` (128×128) and `logo.png` (250×100) are bundled for the Store listing. Required files `CHANGELOG.md` and `DOCS.md` are present in the add-on directory.
 
+> **Installed from the `ha-addons` aggregator instead?** That repository includes this project as a git submodule, and Home Assistant reads only the pinned commit. A new version here therefore stays invisible until the pin is bumped — that is why the store can show `0.1.0` while `main` is newer. See [`docs/ADDON_UPDATES.md`](docs/ADDON_UPDATES.md) for the one-command fix, the hourly sync workflow for `ha-addons`, and the daily pin watchdog.
+
 ---
 
 ## Add-on configuration
