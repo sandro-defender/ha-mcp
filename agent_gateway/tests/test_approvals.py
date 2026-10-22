@@ -121,3 +121,25 @@ def test_reason_length_is_bounded_by_the_api_schema() -> None:
 
     with pytest.raises(ValidationError):
         ApprovalRejectRequest(reason="x" * 301)
+
+
+def test_concurrent_consume_has_exactly_one_winner(runtime: Runtime) -> None:
+    """Concurrent duplicate execution: the conditional UPDATE in consume()
+    (status='approved' AND used_at IS NULL) must admit exactly one caller."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    approval = make_approval(runtime)
+    runtime.approvals.approve(approval["id"], "admin-user")
+
+    def attempt(_: int) -> str:
+        try:
+            consume(runtime, approval["id"])
+        except ApprovalInvalid:
+            return "rejected"
+        return "used"
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(attempt, range(8)))
+    assert results.count("used") == 1
+    assert results.count("rejected") == 7
+    assert runtime.approvals.get(approval["id"])["status"] == "used"

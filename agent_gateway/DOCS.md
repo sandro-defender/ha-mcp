@@ -124,3 +124,13 @@ Invoke-RestMethod -Method Post -Uri "http://homeassistant.local:8098/mcp" -Heade
   - No arbitrary shell execution over SSH (only allowlisted `systemctl is-active`/`status`, allowlisted log paths, and admin-defined `argv` templates).
   - No Proxmox VE write or destructive tools in v0.2.0.
   - Home Assistant domains `hassio`, `homeassistant`, `shell_command`, `command_line`, `python_script`, `recorder`, `system_log`, and `persistent_notification` are hard-blocked even if a policy rule allows `*`.
+
+## Troubleshooting startup: `/bin/sh: can't open '/init': Permission denied`
+
+Fixed in 0.2.1. Cause: the add-on's custom AppArmor profile did not grant
+execute access to the base image's S6-Overlay `/init` entrypoint, so the
+add-on died before `run.sh` started. Update to 0.2.1 or later; do not work
+around it by disabling AppArmor, setting `init: true`, or `chmod`-ing
+`/init`. Architecture notes: Home Assistant WebSocket is not used (REST
+only), and Proxmox write/power/delete operations are intentionally not
+implemented — see `docs/IMPLEMENTATION_AUDIT.md`.
