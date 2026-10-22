@@ -117,6 +117,40 @@ def test_apparmor_defines_exactly_one_profile() -> None:
     assert "#include <tunables/global>" in APPARMOR
 
 
+def test_apparmor_permits_s6_init_entrypoint() -> None:
+    """Regression: `/bin/sh: can't open '/init': Permission denied` at startup.
+
+    The HA base image's ENTRYPOINT is the S6-Overlay v3 `/init` (PID 1, hence
+    `init: false` in config.yaml so Supervisor does not add Docker's init).
+    A custom apparmor.txt replaces the default profile, so it must itself
+    grant execute access to /init and the s6 trees — the previous profile
+    granted only /run.sh and Python paths, so AppArmor denied /init before
+    any application code ran. Per HA developer docs, custom profiles for
+    S6 base images must include these rules.
+    """
+    for rule in (
+        "/init ix,",
+        "/package/** ix,",
+        "/command/** ix,",
+        "/etc/services.d/** rwix,",
+        "/etc/cont-init.d/** rwix,",
+        "/etc/cont-finish.d/** rwix,",
+    ):
+        assert rule in APPARMOR, rule
+
+
+def test_container_startup_chain_is_init_then_run_sh() -> None:
+    # Base image owns ENTRYPOINT /init; the Dockerfile must not override it,
+    # and CMD must be the executable run.sh (chmod'd in the image, since the
+    # git checkout stores it 0644).
+    assert "ENTRYPOINT" not in DOCKERFILE
+    assert 'CMD ["/run.sh"]' in DOCKERFILE
+    assert "chmod 0755 /run.sh" in DOCKERFILE
+    run_script = (ADDON_DIR / "run.sh").read_text(encoding="utf-8")
+    assert run_script.startswith("#!/usr/bin/env bash\n")
+    assert "\r" not in run_script  # CRLF would break the shebang on Alpine
+
+
 def test_repository_metadata_is_valid() -> None:
     assert REPOSITORY["name"]
     assert REPOSITORY["url"].startswith("https://github.com/")

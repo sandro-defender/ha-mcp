@@ -91,3 +91,23 @@ and REST operations both go through `OperationService.execute`
 
 This is a personal project. If you find a problem, open an issue without
 including secrets, tokens, or host details.
+
+## Agent operating boundaries (action classes)
+
+Enforced server-side by the single `PolicyService` + `OperationService`
+pipeline shared by REST, MCP, and SSH tools (`operations.py` order:
+emergency stop → scope → schema → policy → rate limit → approval →
+revalidation → bounded execution → redaction/audit). Frontend state is never
+an authorization input.
+
+| Class | Policy in this release |
+|---|---|
+| 1 Read-only | Executes immediately only with matching scope **and** an explicit allow rule with target constraints; no rule = deny. Response bounds and redaction still apply. |
+| 2 Reversible low-risk writes | None execute immediately: every non-read tool requires approval by default (`policy/engine.py`: `require_approval = risk != "read"`); an admin may not waive this per-rule below the engine default for write risk. |
+| 3 Sensitive/high-impact | Only `ha.call_service` (non-blocked domains) and `ssh.run_template` exist; both are approval-gated, single-use, parameter-bound. HA/Proxmox restarts and network changes are not implemented as tools. |
+| 4 Destructive | Not implemented as tools (no Proxmox delete/power, no HA config deletion, no arbitrary shell) — denied by absence and by policy default-deny. |
+| 5 Always prohibited | Credential disclosure to agents (vault never returns secrets over HTTP), disabling auth/policy/audit/approval (no such agent-reachable route; emergency stop is admin-only and *blocks* agents), TLS/`verify_tls:false` rejection (422), SSH host-key bypass (connection refused without a trusted key), arbitrary/root shell (templates are argv allowlists, root usernames rejected), approval forging/replay (SHA-256 binding + atomic single-use consume). Each item has a demonstrating test — see `docs/IMPLEMENTATION_AUDIT.md`. |
+
+Defaults for a new agent: no policy document → **all operations denied**;
+tokens are per-agent, hashed, optionally expiring, revocable; audit on;
+request/output/time limits from the most restrictive matching rule.

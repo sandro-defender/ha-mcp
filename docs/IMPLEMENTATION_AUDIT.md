@@ -1,0 +1,70 @@
+# Implementation Audit — 0.2.1 (2026-10-22)
+
+Method: code inspection of `agent_gateway/src/gateway/**` plus the executed
+test suite (`pytest -q`, 211 tests — see README "Verification log").
+"Verified" below means a passing automated test exercises the path; mocked
+upstreams (respx/ASGI transport) are **not** live-integration verification.
+No Home Assistant OS/Supervisor, Docker daemon, Proxmox, or real SSH server
+was available in this environment.
+
+## Startup failure (`/init`: Permission denied) — root cause
+
+`agent_gateway/config.yaml` sets `init: false` (correct: the HA base image
+`ghcr.io/home-assistant/base:3.24` ships S6-Overlay v3 whose `/init` must be
+PID 1; `init: false` stops Supervisor adding Docker's own init). The base
+image `ENTRYPOINT ["/init"]` then runs and executes the Dockerfile
+`CMD ["/run.sh"]`. **But the add-on ships a custom `apparmor.txt`, which
+replaces Supervisor's default profile, and that profile granted execute
+permission only to `/run.sh`, Python, and helpers — no `/init`, `/package/**`,
+`/command/**`, or `/etc/cont-init.d/**` rules.** AppArmor therefore denied
+exec of `/init`, producing `/bin/sh: can't open '/init': Permission denied`
+before any application code ran. HA's developer documentation ("S6-Overlay
+3.x update on our docker base images") explicitly requires those rules in
+custom profiles. Fix (0.2.1): added the documented S6 block to
+`apparmor.txt`; regression tests in `tests/test_packaging.py`
+(`test_apparmor_permits_s6_init_entrypoint`,
+`test_container_startup_chain_is_init_then_run_sh`). `init: false` and the
+base image were **not** changed — they were already correct. Container/HA OS
+startup remains **Blocked by infrastructure** here (no Docker/Supervisor);
+CI's `docker/build-push-action` job builds amd64 but does not run it.
+
+## Capability audit
+
+| Area | Status | Evidence (source → tests) |
+|---|---|---|
+| A. HA REST integration | Implemented and verified (mocked upstream) | `connectors/home_assistant.py`, `connectors/http.py` → `test_connectors.py`, `test_agent_api.py` |
+| A. HA WebSocket | Missing (intentional limitation) | No WS client exists; REST only. Documented limitation, not used by any tool. |
+| A. Blocked HA service domains | Implemented and verified | `tools/registry.py` → `test_blocked_service_domains_*`, approval-path test |
+| B. Proxmox read-only (5 tools, token auth, TLS verify, field allowlists) | Implemented and verified (mocked) | `connectors/proxmox.py` → `test_proxmox_*` |
+| B. Proxmox mutations (power/config/delete) | Missing (intentional) | No write tools registered → `test_proxmox_mutations_do_not_exist`, `test_registry_has_no_proxmox_write_tools`. Class-3/4 Proxmox ops are prohibited by absence, not merely policy. |
+| C. Restricted SSH (known_hosts enforced, no root, argv templates, bounds, timeouts) | Implemented and verified (unit level) | `connectors/ssh.py` → `test_ssh_hostkeys.py`, template/injection tests. Live SSH: Blocked by infrastructure. |
+| D. Credential vault (AES-256-GCM, Argon2id KEK wrap, masked UI, export/import, fail-closed) | Implemented and verified | `vault/crypto.py`, `vault/manager.py` → `test_vault.py` (17 tests) |
+| D. Vault key persistence | Implemented and verified | Password-derived KEK; optional 0600 auto-unlock file (off by default). Missing/invalid key fails closed (`test_vault.py`). See `docs/VAULT_RECOVERY.md`. |
+| E. Agent auth (per-agent `hag_` tokens, SHA-256 digest only, expiry, revocation, rate limiting) | Implemented and verified | `auth/agents.py`, `auth/tokens.py`, `api/middleware.py` → `test_agent_api.py`, `test_middleware.py`; expiry test added in 0.2.1 |
+| F. Centralized authorization (one `PolicyService`/`OperationService` for REST+MCP+SSH tools, deny-by-default) | Implemented and verified | `policy/engine.py`, `operations.py` → `test_policy.py`, `test_mcp.py` (REST/MCP parity + shared approval) |
+| G. Approvals (single-use, expiring, bound to agent/tool/connection/SHA-256 of canonical params+policy revision+schema, atomic consume, revalidation before execution) | Implemented and verified | `approvals/service.py`, `operations.py` → `test_approvals.py`; concurrent-consume test added in 0.2.1 (exactly one of 8 wins) |
+| H. Audit & diagnostics (redacted SQLite WAL audit, retention, `/readyz`, redacted diagnostics export) | Implemented and verified | `audit/service.py`, `redaction.py`, `runtime.py` → `test_redaction.py`, admin audit tests |
+| I. HTTP + MCP interfaces (same engine, schema validation, size/time limits, safe errors) | Implemented and verified | `api/agent.py`, `mcp/server.py` → `test_mcp.py`, `test_agent_api.py` |
+| J. Management UI (10 sections, real backend status, secrets never returned, policy simulator) | Implemented and verified (static/ASGI level) | `ui/static/*`, `api/admin.py` → `test_ui_assets.py`, `test_admin_api.py`. Browser E2E (Playwright smoke in `tools/ui-smoke`) not run here: Blocked by infrastructure. |
+
+## Security gaps / remediation (priority order)
+
+1. **Fixed 0.2.1 (critical, startup/security):** AppArmor profile denied the
+   S6 `/init` entrypoint — add-on could not start under Supervisor.
+2. **High — unverified on real HA OS:** image builds in CI but is never run;
+   add a CI smoke job that starts the container and probes `/healthz`
+   (requires Docker-capable runner changes; not possible in this sandbox).
+3. **Medium:** Proxmox/HA/SSH have no live integration tests; keep mocked
+   status until a lab exists. Do not claim live verification.
+4. **Medium:** No HA WebSocket support — acceptable scope limitation; state
+   it in user docs (done in `agent_gateway/DOCS.md` known limitations).
+5. **Low:** Root `SECURITY.md` was referenced by README but missing —
+   restored in 0.2.1 as a pointer to `docs/SECURITY.md`.
+6. **Low (accepted, documented):** bearer-token agents, admin trust, and
+   host-compromise limits — see `docs/SECURITY.md` "Known limitations".
+
+## Infrastructure-blocked validation
+
+Live HA OS install/start via Supervisor, real HA/Proxmox/SSH connections,
+aarch64 image build/run, Windows MCP client E2E, browser smoke tests.
+None were fabricated; all remain open.

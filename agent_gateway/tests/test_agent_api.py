@@ -371,3 +371,20 @@ async def test_unknown_operation_is_not_found_for_other_agents(runtime: Runtime,
     async with agent_http(runtime, other) as client:
         response = await client.get("/api/v1/operations/deadbeef")
     assert response.status_code == 404
+
+
+async def test_expired_token_is_rejected(runtime: Runtime, setup: dict) -> None:
+    """An expiry in the past (written directly, as time passing would produce)
+    must fail authentication exactly like a revoked token."""
+    from datetime import timedelta
+
+    from gateway.utils import iso, utcnow
+
+    runtime.db.execute(
+        "UPDATE agents SET expires_at=? WHERE id=?",
+        (iso(utcnow() - timedelta(minutes=1)), setup["agent"]["id"]),
+    )
+    async with agent_http(runtime, str(setup["token"])) as client:
+        response = await client.get("/api/v1/tools")
+    assert response.status_code == 401
+    assert runtime.agents.authenticate(setup["token"]) is None

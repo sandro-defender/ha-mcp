@@ -6,6 +6,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-22
+
+### Fixed
+- **Add-on startup failure `/bin/sh: can't open '/init': Permission denied`**: the custom `apparmor.txt` profile replaced the Supervisor default profile but granted no execute permission to the Home Assistant base image's S6-Overlay v3 `/init` entrypoint (or `/package/**`, `/command/**`, `/etc/cont-init.d/**`), so AppArmor denied `/init` before `run.sh` or any application code could run. Added the S6 rule block required by the Home Assistant developer documentation for custom AppArmor profiles. `init: false` and the `ghcr.io/home-assistant/base:3.24` base image were already correct and are unchanged. Regression tests assert the S6 rules and the `/init` → `CMD ["/run.sh"]` startup chain.
+
+### Security
+- Added concurrent approval-consumption test proving exactly one of 8 simultaneous attempts can consume an approved operation, and an expired-agent-token rejection test.
+
+### Documentation
+- Added `docs/IMPLEMENTATION_AUDIT.md` (capability-by-capability status, evidence, infrastructure-blocked items), documented the Class 1–5 agent operating boundaries in `docs/SECURITY.md`, and restored the root `SECURITY.md` referenced by the README.
+
+### Known limitations
+- Startup fix verified by packaging regression tests and the full test suite in this environment; no Docker daemon or Home Assistant Supervisor was available here, so container run and live HA OS installation remain to be confirmed (CI builds the amd64 image). No live Home Assistant/Proxmox/SSH integration test was run.
+
 ## [0.2.0] - 2026-10-21
 
 ### Added
