@@ -44,6 +44,13 @@ profile ha_agent_gateway flags=(attach_disconnected,mediate_deleted) {
   /etc/s6-overlay/** rix,
   /etc/fix-attrs.d/** r,
 
+  # /run.sh is the add-on's CMD.  rc.init (the stage-2 script) executes it, so
+  # it needs the same read+execute pair as the S6 scripts -- the /run/{,**}
+  # rule below covers the /run directory tree, not this sibling file.  Missing
+  # this rule produced, in CI under the real profile:
+  #   /run/s6/basedir/scripts/rc.init: line 105: /run.sh: Permission denied
+  /run.sh rix,
+
   # Stage-2 legacy hooks (/etc/cont-init.d, /etc/services.d) and their finish
   # counterparts.  Scripts executed through a shebang need `r` as well.
   /etc/services.d/** rix,

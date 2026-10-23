@@ -247,7 +247,7 @@ a token after it has been consumed.
 
 Run in this environment:
 
-- full pytest suite (319 tests at the time of writing), including 33 new
+- full pytest suite (320 tests at the time of writing), including 33 new
   broker/page tests and the static startup contract,
 - `ruff check`, `ruff format --check`, `mypy src` (strict),
 - `tools/startup-smoke/smoke.py` (real `run.sh`, both listeners, Ingress gate,

@@ -148,6 +148,27 @@ Supervisor applies (Supervisor renames the profile to the add-on slug but keeps
 the rules). Otherwise it falls back to the Docker default profile and prints
 that it did so — a green run without AppArmor does **not** prove the profile.
 
+## What the first real container run under the profile found
+
+The container smoke test was extended to load `agent_gateway/apparmor.txt` into
+the kernel and enforce it (`--security-opt apparmor=ha_agent_gateway`). The
+first run reached S6 stage 2 — i.e. the read fix worked — and then stopped with:
+
+```text
+/run/s6/basedir/scripts/rc.init: line 105: /run.sh: Permission denied
+```
+
+`/run.sh` is the add-on's `CMD`, executed by the stage-2 `rc.init`. The profile
+covered `/init`, `/package/**`, `/command/**` and the `/run/` **tree**
+(`/run/{,**}`), but `/run.sh` is a sibling of that directory, so it had no
+execute rule. 0.4.0 adds `/run.sh rix`, and `tests/test_startup.py` now lists
+`/run.sh` among the executables the S6 chain launches.
+
+This is the value of the container job: a static rule review did not catch it,
+and neither did the process-level smoke test (which bypasses AppArmor and S6).
+Runs where AppArmor cannot be loaded on the runner report a `notice` annotation
+and are **not** evidence that the profile is correct.
+
 ## What remains unverified
 
 - No Home Assistant OS host, Supervisor, or `apparmor_parser` was available in
