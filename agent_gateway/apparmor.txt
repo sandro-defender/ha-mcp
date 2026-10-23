@@ -102,7 +102,14 @@ profile ha_agent_gateway flags=(attach_disconnected,mediate_deleted) {
   # Nothing outside /data, /tmp and /run is writable.
   # ---------------------------------------------------------------------------
   /etc/** r,
+  # Directory entries need their own rule: `/proc/**` does not match `/proc/`,
+  # and a process table that cannot be listed breaks `ps`, `top`, and -- more
+  # importantly -- s6-linux-init's shutdown path, which enumerates /proc to reap
+  # remaining processes.  The container then never exits and Docker has to
+  # SIGKILL it (exit 137).
+  /proc/ r,
   /proc/** r,
+  /sys/ r,
   /sys/devices/system/cpu/** r,
   /usr/share/** r,
   /dev/urandom r,
