@@ -49,9 +49,10 @@ container_state() {
     "$CONTAINER" 2>&1 || echo "container $CONTAINER does not exist"
 }
 
+STEP="startup"
 fail() {
   local reason="$1" details
-  details="image=$IMAGE container=$CONTAINER apparmor=$AA_MODE"$'\n'"$(container_state)"$'\n'
+  details="step=$STEP image=$IMAGE container=$CONTAINER apparmor=$AA_MODE"$'\n'"$(container_state)"$'\n'
   details+="--- docker logs (tail 60) ---"$'\n'"$(docker logs "$CONTAINER" 2>&1 | tail -60 || true)"
   printf '\nRESULT: FAIL — %s\n' "$reason" >&2
   printf '%s\n' "$details" >&2
@@ -149,38 +150,50 @@ curl -fsS --max-time 5 "http://127.0.0.1:${AGENT_PORT}/healthz" | grep -q "\"ok\
 curl -fsS --max-time 5 "http://127.0.0.1:${INGRESS_PORT}/readyz" | grep -q '"ready":true' || fail "/readyz not ready"
 
 log "S6 chain and privilege state"
-docker exec "$CONTAINER" sh -c 'test -x /init && test -r /init' || fail "/init is not readable+executable in the image"
-docker exec "$CONTAINER" sh -c 'ls /package/admin/s6-overlay-*/libexec/preinit >/dev/null' || fail "preinit missing from the image"
-
-# PID 1 must be s6-svscan (or the stage-2 shell before it hands over), never a
-# bare python: that is what proves S6 actually completed its init.
-PID1="$(docker inspect -f '{{.State.Pid}}' "$CONTAINER")"
-COMM1="$(ps -o comm= -p "$PID1" 2>/dev/null | tr -d ' ' || true)"
-echo "container pid1=$COMM1"
-case "$COMM1" in
-  s6-svscan|s6-svscanctl|execlineb|s6-linux-init|/init|init) ;;
-  "") echo "warning: could not read PID 1 command name" ;;
-  *) fail "unexpected PID 1 '$COMM1' (S6 did not take over)" ;;
+STEP="s6-chain"
+S6_OUT="$(docker exec "$CONTAINER" sh -c '
+  echo "init: read=$([ -r /init ] && echo y || echo n) exec=$([ -x /init ] && echo y || echo n)"
+  echo "preinit: $(ls /package/admin/s6-overlay*/libexec/preinit 2>&1)"
+  echo "run.sh:  read=$([ -r /run.sh ] && echo y || echo n) exec=$([ -x /run.sh ] && echo y || echo n)"
+  echo "pid1:    $(cat /proc/1/comm 2>/dev/null || echo unknown)"
+  echo "uid:     $(id -u)"
+' 2>&1)" || fail "docker exec failed while inspecting the S6 chain"
+echo "$S6_OUT"
+case "$S6_OUT" in
+  *"init: read=y exec=y"*) ;;
+  *) fail "/init is not readable+executable from inside the container" ;;
+esac
+case "$S6_OUT" in
+  *"run.sh:  read=y exec=y"*) ;;
+  *) fail "/run.sh is not readable+executable from inside the container" ;;
 esac
 
-# Find the gateway process through /proc so this works with busybox ps.
-GATEWAY_UID="$(docker exec "$CONTAINER" sh -c '
-  for p in /proc/[0-9]*; do
-    [ -r "$p/cmdline" ] || continue
-    cmd=$(tr "\0" " " < "$p/cmdline" 2>/dev/null) || continue
-    case "$cmd" in
-      *"-m gateway"*)
-        awk "/^Uid:/{print \$2; exit}" "$p/status" 2>/dev/null
-        ;;
-    esac
-  done' | head -1)"
-if [ -z "$GATEWAY_UID" ]; then
+# PID 1 must be an s6 process.  A bare python (or a shell wrapper) would mean
+# S6 never completed its init and the add-on is not running the supported way.
+P1_LINE="$(printf '%s\n' "$S6_OUT" | sed -n 's/^pid1: *//p')"
+echo "container pid1=$P1_LINE"
+case "$P1_LINE" in
+  s6-svscan|s6-svscanctl|s6-linux-init|execlineb|init) ;;
+  unknown|"") echo "warning: could not read PID 1 comm, relying on the health checks" ;;
+  python*) fail "PID 1 is '$P1_LINE': S6 was bypassed" ;;
+  *) echo "note: PID 1 is '$P1_LINE'" ;;
+esac
+
+# The gateway must run as the unprivileged app user.  Read it from the host's
+# process table: no in-container /proc parsing, no busybox ps differences.
+STEP="privilege"
+TOP="$(docker top "$CONTAINER" -eo pid,uid,args 2>&1)" || fail "docker top failed"
+GATEWAY_LINE="$(printf '%s\n' "$TOP" | grep -- '-m gateway' | grep -v -- 'grep' | head -1 || true)"
+if [ -z "$GATEWAY_LINE" ]; then
+  printf '%s\n' "$TOP" >&2
   fail "no 'python -m gateway' process found inside the container"
 fi
-echo "gateway uid=$GATEWAY_UID"
-[ "$GATEWAY_UID" = "1000" ] || fail "the gateway process is not running as uid 1000 (got $GATEWAY_UID)"
+GATEWAY_UID="$(printf '%s\n' "$GATEWAY_LINE" | awk '{print $2}')"
+echo "gateway process: $GATEWAY_LINE"
+[ "$GATEWAY_UID" = "1000" ] || fail "the gateway process is not running as uid 1000 (got '$GATEWAY_UID')"
 
 log "Readiness after in-place restart"
+STEP="restart"
 docker restart "$CONTAINER" >/dev/null
 READY=0
 for _ in $(seq 1 60); do
@@ -196,6 +209,7 @@ done
 [ "$READY" = "1" ] || fail "not ready 60 s after restart"
 
 log "Graceful shutdown"
+STEP="shutdown"
 docker stop --time 20 "$CONTAINER" >/dev/null || fail "docker stop failed"
 EXIT_CODE="$(docker inspect -f '{{.State.ExitCode}}' "$CONTAINER")"
 docker logs "$CONTAINER" 2>&1 | tail -20 || true
