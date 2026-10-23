@@ -40,6 +40,10 @@ def _admin_config(app: Any, settings: Settings) -> uvicorn.Config:
         date_header=False,
         proxy_headers=False,
         timeout_keep_alive=10,
+        # Bound the drain: S6 gives us S6_KILL_GRACETIME (10 s) before it
+        # sends KILL, and the Supervisor waits 10 s before SIGKILL.  Without a
+        # bound, a stuck client keeps the process alive until it is killed.
+        timeout_graceful_shutdown=5,
     )
 
 
@@ -54,6 +58,10 @@ def _agent_config(app: Any, settings: Settings) -> uvicorn.Config:
         date_header=False,
         proxy_headers=False,
         timeout_keep_alive=10,
+        # Bound the drain: S6 gives us S6_KILL_GRACETIME (10 s) before it
+        # sends KILL, and the Supervisor waits 10 s before SIGKILL.  Without a
+        # bound, a stuck client keeps the process alive until it is killed.
+        timeout_graceful_shutdown=5,
         ssl_certfile=str(settings.tls_certfile) if settings.tls_certfile else None,
         ssl_keyfile=str(settings.tls_keyfile) if settings.tls_keyfile else None,
     )

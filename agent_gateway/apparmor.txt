@@ -17,9 +17,16 @@ profile ha_agent_gateway flags=(attach_disconnected,mediate_deleted) {
   # The container starts as root only to fetch the Supervisor-mounted /data
   # volume, then immediately execs su-exec to become the unprivileged `app`
   # user.  The Python process itself runs without capabilities.
+  #
+  # `kill` is required because the app runs as uid 1000 while the supervisor
+  # stays root: signalling a process that dropped privileges needs CAP_KILL,
+  # and a profile that lists capabilities denies the unlisted ones.  Without it
+  # the in-container `kill -TERM <app pid>` returns EPERM, S6 cannot stop the
+  # service, and every stop ends in SIGKILL (exit 137).
   # ---------------------------------------------------------------------------
   capability chown,
   capability dac_override,
+  capability kill,
   capability setgid,
   capability setuid,
 

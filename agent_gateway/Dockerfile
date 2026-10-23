@@ -13,20 +13,21 @@ LABEL \
   org.opencontainers.image.source="https://github.com/sandro-defender/ha-mcp" \
   org.opencontainers.image.version="${BUILD_VERSION}"
 
-# Send `docker stop` / Supervisor TERM, INT, QUIT and the other divertible
-# signals to the CMD (the gateway) instead of to PID 1.  s6-overlay's default
-# leaves the CMD unsignalled until "everything else is down and the container is
-# about to exit"; with a long-running app as the CMD that never happens and the
-# runtime has to SIGKILL the container (exit 137).
+# Shutdown budget.  At the end of the shutdown sequence s6 sends TERM to the
+# remaining processes (including the CMD, which is where the gateway runs) and
+# waits this long before KILL.  The default 3000 ms is too tight for uvicorn to
+# drain two listeners; 10 s stays inside the 10 s default stop timeout that
+# Docker and the Supervisor use, because the app exits on its own well before
+# the budget is exhausted.
 #
-# Measured with the container smoke test: without this, `docker stop` ends in
-# 137 and the app logs no shutdown at all; with it, the app receives TERM,
-# uvicorn drains and the container exits 0.  See
-# docs/STARTUP_TROUBLESHOOTING.md.
+# Note: S6_CMD_RECEIVE_SIGNALS is deliberately NOT used.  s6-overlay implements
+# it with `kill -s TERM -- <pid>` in its CMDSIG helper, and busybox `kill` (the
+# Alpine shell builtin) rejects `--` ("invalid number '--'"), so the signal is
+# never delivered and the container hangs.  Measured on the built image.
 ENV LANG=C.UTF-8 \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    S6_CMD_RECEIVE_SIGNALS=1
+    S6_KILL_GRACETIME=10000
 
 # Python runtime, privilege dropping, and build dependencies for any
 # dependency without a musllinux wheel.  The build dependencies are removed in

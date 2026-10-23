@@ -192,16 +192,33 @@ def test_profile_still_drops_privileges_before_the_application() -> None:
     assert 'if [ "$(id -u)" = "0" ]' in RUN_SH
 
 
-def test_cmd_receives_stop_signals() -> None:
-    """s6-overlay only forwards stop signals to the CMD when told to.
+def test_shutdown_budget_is_configured() -> None:
+    """The CMD must be given time to drain when s6 terminates it.
 
-    With the default (0) the CMD is killed last, "when everything else is down
-    and the container is about to exit"; a long-running app as the CMD never
-    gets TERM, so `docker stop` ends in SIGKILL (exit 137).  Verified with the
-    container smoke test -- see docs/STARTUP_TROUBLESHOOTING.md.
+    s6 sends TERM to the remaining processes at the end of the shutdown
+    sequence and KILLs whatever is still alive after S6_KILL_GRACETIME (3 s by
+    default).  Two uvicorn listeners can need longer than that.
+
+    S6_CMD_RECEIVE_SIGNALS is deliberately not used: s6-overlay's CMDSIG helper
+    runs `kill -s TERM -- <pid>` and busybox `kill` rejects `--`, so the
+    diversion never delivers anything (verified on the built image).
     """
 
-    assert "S6_CMD_RECEIVE_SIGNALS=1" in DOCKERFILE
+    assert "S6_KILL_GRACETIME=10000" in DOCKERFILE
+    assert "S6_CMD_RECEIVE_SIGNALS" in DOCKERFILE  # documented as not used
+    assert "S6_CMD_RECEIVE_SIGNALS=1" not in DOCKERFILE
+
+
+def test_profile_grants_cap_kill() -> None:
+    """The supervisor must be able to signal the app after it drops privileges.
+
+    The app runs as uid 1000 while S6 stays root; CAP_KILL is required for
+    that, and a profile that lists capabilities denies the unlisted ones.
+    Without it `kill -TERM <app pid>` fails with EPERM inside the container and
+    every stop ends in SIGKILL.
+    """
+
+    assert "capability kill," in APPARMOR
 
 
 def test_profile_leaves_signals_unmediated() -> None:
