@@ -220,19 +220,35 @@ if [ "${SMOKE_DIAG_SIGNALS:-0}" = "1" ]; then
   DIAG+="--- ps ---"$'\n'"$PS_OUT"$'\n'
   PY_PID="$(printf '%s\n' "$PS_OUT" | grep -- '-m gateway' | grep -v -- 'grep' | awk '{print $1}' | head -1 || true)"
   DIAG+="python pid: ${PY_PID:-not found}"$'\n'
+
   if [ -n "$PY_PID" ]; then
-    docker exec "$CONTAINER" kill -TERM "$PY_PID" >/dev/null 2>&1 || DIAG+="kill -TERM failed"$'\n'
-    for i in $(seq 1 12); do
+    DIAG+="--- in-container signal tests ---"$'\n'
+    DIAG+="$(docker exec "$CONTAINER" sh -c "kill -0 $PY_PID; echo 'kill -0 rc='\$?; kill -TERM $PY_PID; echo 'kill -TERM rc='\$?" 2>&1 || true)"$'\n'
+    for i in $(seq 1 6); do
       sleep 1
       st="$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null || echo unknown)"
-      DIAG+="t+${i}s running=$st"$'\n'
+      DIAG+="after in-container TERM t+${i}s running=$st"$'\n'
       [ "$st" = "true" ] || break
     done
   fi
-  DIAG+="--- app log (last 15) ---"$'\n'"$(docker logs "$CONTAINER" 2>&1 | tail -15 || true)"$'\n'
-  DIAG+="--- shutdown markers ---"$'\n'"$(docker logs "$CONTAINER" 2>&1 | grep -iE 'shutting down|shutdown requested|signal|terminated|Force' | tail -10 || true)"
+
+  # Host-side signal: bypasses the container profile entirely.
+  HOST_PID="$(docker top "$CONTAINER" 2>/dev/null | awk '/-m gateway/ && !/awk/ {print $2}' | head -1 || true)"
+  DIAG+="host pid for gateway: ${HOST_PID:-not found}"$'\n'
+  if [ -n "$HOST_PID" ]; then
+    sudo -n kill -TERM "$HOST_PID" 2>&1 && DIAG+="host kill rc=0"$'\n' || DIAG+="host kill rc=$?"$'\n'
+    for i in $(seq 1 10); do
+      sleep 1
+      st="$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null || echo unknown)"
+      DIAG+="after host TERM t+${i}s running=$st"$'\n'
+      [ "$st" = "true" ] || break
+    done
+  fi
+
+  DIAG+="--- app log (last 12) ---"$'\n'"$(docker logs "$CONTAINER" 2>&1 | tail -12 || true)"$'\n'
+  DIAG+="--- shutdown markers ---"$'\n'"$(docker logs "$CONTAINER" 2>&1 | grep -iE 'shutting down|shutdown requested|signal|terminated' | tail -10 || true)"
   printf '%s\n' "$DIAG"
-  annotate warning "Startup smoke: direct SIGTERM to python" "$DIAG"
+  annotate warning "Startup smoke: signal diagnostic" "$DIAG"
   cleanup
   echo "RESULT: DIAG (not a pass/fail)"
   exit 0
