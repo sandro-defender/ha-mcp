@@ -225,19 +225,26 @@ bounds that drain with `timeout_graceful_shutdown=5`.
 A run where the runner cannot load the profile reports a `notice` annotation and
 is **not** evidence that the rules are correct.
 
-## What remains unverified
+## What real Home Assistant OS boot confirmed (0.4.0 → 0.4.1)
 
-- No Home Assistant OS host or Supervisor was available. The image was built and
-  booted under real Docker and a real AppArmor kernel by CI, but not by the
-  Supervisor, so Supervisor-side behaviour (profile install/rename,
-  `security_opt`, `init: false`, watchdog) is verified from source only.
-- The rule set is a defensive superset of the documented HA example (which
-  grants `ix` only and compensates with a broad `file,` rule); it was not
-  minimised against a particular Supervisor version.
-- The reported failure itself was not reproduced: this container's *first*
-  failure was the `/run.sh` denial, which is the same class of defect one stage
-  later. The read-denial diagnosis for `/init` and `libexec/preinit` remains
-  inferred from the pinned sources plus the exact error strings.
+- **S6-Overlay + AppArmor startup confirmed on real Home Assistant OS (0.4.0).**
+  The user's Supervisor log confirmed S6-Overlay reached `legacy-services
+  successfully started`, `run.sh` dropped privileges, SQLite migrated to v4
+  (`session epoch is now 1`), both listeners bound (`:8099` and `:8098`),
+  Supervisor watchdog probes hit `GET /healthz -> 200`, and Home Assistant
+  Ingress served `GET /`, `GET /static/styles.css`, and `GET /static/app.js`
+  with `200`. (Note: Supervisor's journald log buffer retains earlier boot
+  lines from pre-0.4.0 runs above the current boot's `s6-overlay/libexec/preinit`
+  banner.)
+- **Follow-up container-path bug found on Ingress panel load and fixed in 0.4.1.**
+  Opening the panel hit `GET /api/admin/status`, which threw `IndexError: 4` inside
+  `gateway/releases.py` (`find_changelog_path()` indexed `here.parents[4]`, while
+  `/app/src/gateway/releases.py` has only four parent directories). Fixed in 0.4.1
+  by iterating `itertools.islice(here.parents, 5)`, and gated at both `docker build`
+  time (`Dockerfile`) and CI container smoke time (`tools/startup-smoke/docker-smoke.sh`).
+- **Still pending on real Home Assistant OS:** verifying 0.4.1 Ingress panel
+  initialization (vault setup/unlock), Project Journal persistence across a
+  restart, and an end-to-end Agent Access session.
 
 ## Related files
 

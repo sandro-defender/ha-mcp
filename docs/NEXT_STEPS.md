@@ -4,12 +4,17 @@
 > each session. `P0` blocks a production claim; lower numbers = do sooner.
 > Verification levels per `AGENTS.md` §4.
 
-## P0 — verify 0.4.0 on real Home Assistant OS (blocked: needs user's HA OS)
+## P0 — verify 0.4.1 Ingress panel & Agent Access on real Home Assistant OS (blocked: needs user's HA OS)
 
-- **Task:** Install/update the add-on to 0.4.0 from this repository on the
-  real HA OS host; confirm startup under the Supervisor (AppArmor read+execute
-  fix for the whole S6 chain), open the panel via Ingress, confirm the existing
-  `/data` migrates v2/v3 → v4 in place, and exercise one Agent Access session
+- **Status:** Partially verified on 0.4.0 — real HA OS log confirmed the S6
+  AppArmor startup fix, schema v4 startup (`session epoch is now 1`), watchdog
+  `/healthz -> 200`, and Ingress static asset delivery (`GET /`,
+  `/static/styles.css`, `/static/app.js` → `200`), which exposed `IndexError: 4`
+  on `GET /api/admin/status` (fixed in `0.4.1`).
+- **Task:** Update the add-on from `0.4.0` to `0.4.1` on the real HA OS host
+  (and bump the `ha-addons` submodule pin if installed via `sandro-defender/ha-addons`),
+  open the panel via Ingress, confirm vault setup/unlock and Project Journal
+  load cleanly without `IndexError`, and exercise one Agent Access session
   (issue → `/agent` redeem → one read tool → revoke).
 - **Depends on:** user authorization + access to the HA OS host. Do **not**
   deploy without explicit approval.

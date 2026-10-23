@@ -1,5 +1,5 @@
 name: "Home Assistant Agent Gateway"
-version: "0.4.0"
+version: "0.4.1"
 slug: "ha_agent_gateway"
 description: "Policy-controlled gateway for AI agents to operate Home Assistant, Proxmox VE, and restricted SSH targets without receiving credentials."
 url: "https://github.com/sandro-defender/ha-mcp"

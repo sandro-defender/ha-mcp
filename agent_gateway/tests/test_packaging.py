@@ -194,3 +194,15 @@ def test_ui_assets_are_packaged() -> None:
     assert 'gateway = ["ui/static/*", "ui/agent/*", "py.typed"]' in pyproject
     for name in ("index.html", "app.js", "styles.css"):
         assert (ADDON_DIR / "src" / "gateway" / "ui" / "static" / name).is_file(), name
+
+
+def test_changelogs_and_versions_are_synchronized() -> None:
+    from gateway import __version__
+
+    root_changelog = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    addon_changelog = (ADDON_DIR / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert root_changelog == addon_changelog
+    assert CONFIG["version"] == __version__
+    assert f'version = "{__version__}"' in (ADDON_DIR / "pyproject.toml").read_text(encoding="utf-8")
+    assert f"ARG BUILD_VERSION={__version__}" in DOCKERFILE
+    assert f"## [{__version__}]" in root_changelog

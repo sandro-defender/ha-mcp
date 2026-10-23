@@ -251,11 +251,12 @@
   /* ------------------------------------------------------------------- api */
 
   class ApiError extends Error {
-    constructor(message, { status, code, details } = {}) {
+    constructor(message, { status, code, details, requestId } = {}) {
       super(message);
       this.status = status;
       this.code = code;
       this.details = details;
+      this.requestId = requestId || null;
     }
   }
 
@@ -285,6 +286,7 @@
         status: response.status,
         code: error.code || "request_failed",
         details: error.details || null,
+        requestId: (payload && payload.request_id) || response.headers?.get?.("x-request-id") || null,
       });
     }
     return payload;
@@ -3817,16 +3819,33 @@
 
   function renderFatal(error) {
     const denied = error instanceof ApiError && (error.status === 403 || error.status === 401);
+    const serverError = error instanceof ApiError && error.status >= 500;
+    const heading = denied
+      ? "Management access is restricted"
+      : serverError
+        ? "The gateway encountered an internal error"
+        : "The gateway is not reachable";
+    const noticeTitle = denied
+      ? "Open the panel from Home Assistant"
+      : serverError
+        ? "Check the add-on log"
+        : "Check the add-on";
+    const reqNote =
+      serverError && error.requestId ? ` Reference request ID: ${esc(error.requestId)}.` : "";
+    const noticeBody = denied
+      ? "The management API is only reachable through Home Assistant Ingress, and only the Supervisor proxy may connect to it."
+      : serverError
+        ? `The add-on responded with HTTP ${esc(error.status)}. Inspect Settings → Add-ons → Home Assistant Agent Gateway → Log for details.${reqNote}`
+        : "Confirm that the Home Assistant Agent Gateway add-on is running and open this panel from Home Assistant Ingress.";
     $("#app").innerHTML = authShell(`
       <div>
-        <h1>${denied ? "Management access is restricted" : "The gateway is not reachable"}</h1>
+        <h1>${heading}</h1>
         <p class="auth-lede">${esc(errorText(error))}</p>
       </div>
       <div class="notice" data-tone="danger">
         ${icon("alert", 18)}
-        <div><strong>${denied ? "Open the panel from Home Assistant" : "Check the add-on"}</strong>
-          The management API is only reachable through Home Assistant Ingress, and only the Supervisor
-          proxy may connect to it.</div>
+        <div><strong>${noticeTitle}</strong>
+          ${noticeBody}</div>
       </div>
       <div class="button-row">
         <button type="button" class="button" data-variant="primary" id="retry-boot">

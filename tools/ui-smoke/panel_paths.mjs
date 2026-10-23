@@ -44,6 +44,7 @@ const baseStatus = (overrides) => ({
 });
 
 let statusPayload;
+let statusHttpCode = 200;
 const posts = [];
 window.fetch = async (url, options = {}) => {
   const path = String(url).split("api/admin/")[1]?.split("?")[0] || "";
@@ -55,7 +56,7 @@ window.fetch = async (url, options = {}) => {
     headers: { get: () => "application/json" },
     json: async () => body,
   });
-  if (path === "status") return respond(200, statusPayload);
+  if (path === "status") return respond(statusHttpCode, statusPayload);
   if (path === "vault/initialize") {
     statusPayload = baseStatus({});
     return respond(200, { created: true });
@@ -213,6 +214,25 @@ async function main() {
   footer2[footer2.length - 1].click();
   await tick(120);
   check("policy saved", posts.some((p) => p.method === "PUT" && p.path.endsWith("/policy")));
+
+  // Boot HTTP 500 error path: renders internal-error message + request_id, not Ingress blame.
+  statusHttpCode = 500;
+  statusPayload = {
+    error: { code: "internal_error", message: "the request could not be completed" },
+    request_id: "req500abc",
+  };
+  window.document.querySelector("#app").innerHTML = "";
+  window.eval(appJs);
+  await tick(80);
+  check("500 heading distinguishes internal error", text().includes("internal error"));
+  check("500 shows request id", text().includes("req500abc"));
+  check("500 does not blame Ingress proxy", !text().includes("Supervisor proxy may connect"));
+
+  statusHttpCode = 200;
+  statusPayload = baseStatus({});
+  window.document.querySelector("#retry-boot").click();
+  await tick(120);
+  check("retry boot recovers after 500", text().includes("Security posture"));
 
   console.log(`\nrequests: ${posts.map((p) => `${p.method} ${p.path}`).join(", ")}`);
   if (failures.length) {

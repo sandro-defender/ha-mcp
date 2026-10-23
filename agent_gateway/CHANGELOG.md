@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-23
+
+### Fixed
+- **Ingress panel failed to load inside the add-on container (`IndexError: 4` on `GET /api/admin/status`).** In the built image `run.sh` sets `PYTHONPATH=/app/src`, so `gateway.releases.__file__` resolves to `/app/src/gateway/releases.py`, which has only four parent directories (`/app/src/gateway`, `/app/src`, `/app`, `/`). `find_changelog_path()` indexed `here.parents[4]` directly, throwing `IndexError: 4` on every `/api/admin/status`, `/api/admin/releases`, and `/api/admin/diagnostics` request even after S6-Overlay and both uvicorn listeners started cleanly. Replaced fixed parent indexing with bounded iteration (`itertools.islice(here.parents, 5)`) and guarded filesystem probes against `OSError` / `PermissionError`.
+- **Reverse-proxied Home Assistant Ingress mutations (`Origin` vs `X-Forwarded-Host`).** When Home Assistant sits behind a reverse proxy, Cloudflare Tunnel, or Nabu Casa, Home Assistant Core's Ingress proxy sets `X-Forwarded-Host` to the browser-facing host while `Host` may carry the internal upstream host. `AdminGateMiddleware` (still gated strictly to the Supervisor proxy peer `172.30.32.2`, `X-Remote-User-Id`, `X-Gateway-Request: 1`, and `Sec-Fetch-Site`) now accepts `Origin` matching either `Host` or `X-Forwarded-Host` and normalizes default `:80`/`:443` ports.
+- **Misleading Ingress boot error message on HTTP 5xx.** When `GET /api/admin/status` returned a 500 `internal_error`, the panel previously displayed *"The gateway is not reachable / Check the add-on: The management API is only reachable through Home Assistant Ingress…"*. `renderFatal()` now distinguishes 401/403 Ingress access restrictions, 5xx internal add-on errors (pointing to the add-on log and `request_id`), and network unreachability.
+
+### Changed
+- **Build-time and CI container status gates.** `agent_gateway/Dockerfile` now boots a throwaway `Runtime` under `PYTHONPATH=/app/src` as `app:app` during `docker build` and verifies `find_changelog_path() == Path('/app/CHANGELOG.md')`, `runtime.status()`, and `runtime.readiness()`. `tools/startup-smoke/docker-smoke.sh` additionally probes `/`, `/static/app.js`, `/api/admin/status`, `/api/admin/releases`, `/api/admin/agent-access`, and `/api/admin/journal/project-state` inside the container.
+- Added explicit directory read rules (`/app/ r,`, `/opt/venv/ r,`) to `agent_gateway/apparmor.txt` alongside their `/**` rules, and enforced byte-for-byte identity between `CHANGELOG.md` and `agent_gateway/CHANGELOG.md` in `tests/test_packaging.py`.
+
 ## [0.4.0] - 2026-10-23
 
 ### Fixed

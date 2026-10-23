@@ -2,7 +2,7 @@ ARG BUILD_FROM=ghcr.io/home-assistant/base:3.24
 FROM ${BUILD_FROM}
 
 ARG BUILD_ARCH
-ARG BUILD_VERSION=0.4.0
+ARG BUILD_VERSION=0.4.1
 
 LABEL \
   io.hass.name="Home Assistant Agent Gateway" \
@@ -64,8 +64,21 @@ RUN set -eu; \
     test -x "$preinit" && test -r "$preinit"; \
     stage0="$(dirname "$preinit")/stage0"; \
     test -x "$stage0" && test -r "$stage0"; \
-    su-exec app:app /opt/venv/bin/python -c \
-        "import argon2, asyncssh, cryptography, fastapi, gateway, uvicorn; print('gateway imports ok')"
+    PYTHONPATH=/app/src su-exec app:app /opt/venv/bin/python -c \
+        "import argon2, asyncssh, cryptography, fastapi, gateway, shutil, tempfile, uvicorn; \
+from pathlib import Path; \
+from gateway.releases import find_changelog_path; \
+from gateway.runtime import Runtime; \
+from gateway.settings import load_settings; \
+assert find_changelog_path() == Path('/app/CHANGELOG.md'); \
+tmp = Path(tempfile.mkdtemp(prefix='hag-build-')); \
+rt = Runtime(load_settings(data_dir=tmp), kdf_memory_cost=1024, kdf_time_cost=1); \
+rt.startup(); \
+assert rt.status()['version'] == gateway.__version__; \
+assert rt.readiness()['ready'] is True; \
+rt.shutdown(); \
+shutil.rmtree(tmp); \
+print('gateway imports ok')"
 
 # The entrypoint starts as root only to fix ownership of the Supervisor-mounted
 # /data volume, then immediately drops to the unprivileged app user.
