@@ -216,30 +216,22 @@ STEP="shutdown"
 # to SIGTERM at all, and whether S6 forwards it, before blaming either side.
 if [ "${SMOKE_DIAG_SIGNALS:-0}" = "1" ]; then
   DIAG=""
-  DIAG+="=== ps before stop ==="$'\n'"$(docker exec "$CONTAINER" ps 2>&1 || true)"$'\n'
-  DIAG+="=== /etc/services.d ==="$'\n'"$(docker exec "$CONTAINER" sh -c 'ls -la /etc/services.d /etc/cont-init.d 2>&1' || true)"$'\n'
-  DIAG+="=== rc.shutdown ==="$'\n'"$(docker exec "$CONTAINER" sh -c 'cat /run/s6/basedir/scripts/rc.shutdown 2>&1 | head -80' || true)"$'\n'
-
-  SNAP=/tmp/hag-snap.txt
-  : > "$SNAP"
-  (
-    for i in $(seq 1 12); do
-      sleep 1
-      {
-        printf -- '--- t+%ss ---\n' "$i"
-        docker top "$CONTAINER" 2>&1 | grep -E -- '-m gateway|rc\.init|s6-svscan|shutdownd|s6-supervise' || echo "(no matching processes)"
-      } >> "$SNAP" 2>&1
-    done
-  ) &
-  SNAP_JOB=$!
-  docker stop --time 15 "$CONTAINER" >/dev/null 2>&1 || true
-  wait "$SNAP_JOB" 2>/dev/null || true
-
-  DIAG+="=== during/after stop ==="$'\n'"$(cat "$SNAP")"$'\n'
-  DIAG+="=== state ==="$'\n'"$(docker inspect -f '{{json .State}}' "$CONTAINER" 2>&1 | head -c 600)"$'\n'
-  DIAG+="=== app log tail ==="$'\n'"$(docker logs "$CONTAINER" 2>&1 | tail -20 || true)"
+  PS_OUT="$(docker exec "$CONTAINER" ps 2>&1 || true)"
+  PY_PID="$(printf '%s\n' "$PS_OUT" | grep -- '-m gateway' | grep -v -- 'grep' | awk '{print $1}' | head -1 || true)"
+  DIAG+="python pid: ${PY_PID:-not found}"$'\n'
+  DIAG+="cmdpid file: $(docker exec "$CONTAINER" cat /run/s6/cmdpid 2>&1 || true)"$'\n'
+  DIAG+="env: $(docker exec "$CONTAINER" sh -c 'cat /run/s6/env/S6_CMD_RECEIVE_SIGNALS 2>&1' || true)"$'\n'
+  DIAG+="sig handlers: $(docker exec "$CONTAINER" sh -c 'ls /run/service/.s6-svscan/ 2>&1 | tr "\n" " "' || true)"$'\n'
+  if [ -n "$PY_PID" ]; then
+    DIAG+="kill -0: $(docker exec "$CONTAINER" sh -c "kill -0 $PY_PID; echo rc=\$?" 2>&1 || true)"$'\n'
+    DIAG+="kill -TERM: $(docker exec "$CONTAINER" sh -c "kill -s TERM -- $PY_PID; echo rc=\$?" 2>&1 || true)"$'\n'
+    sleep 4
+    DIAG+="after TERM: $(docker inspect -f 'running={{.State.Running}}' "$CONTAINER" 2>&1)"$'\n'
+  fi
+  DIAG+="=== uncaught logs ==="$'\n'"$(docker exec "$CONTAINER" sh -c 'tail -20 /run/uncaught-logs/current 2>&1' || true)"$'\n'
+  DIAG+="=== app log tail ==="$'\n'"$(docker logs "$CONTAINER" 2>&1 | tail -12 || true)"
   printf '%s\n' "$DIAG"
-  annotate warning "Startup smoke: shutdown diagnostic" "$DIAG"
+  annotate warning "Startup smoke: signal diagnostic" "$DIAG"
   cleanup
   echo "RESULT: DIAG (not a pass/fail)"
   exit 0
