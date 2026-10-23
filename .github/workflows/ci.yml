@@ -1,14 +1,11 @@
 name: CI
-
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   python:
     name: Lint, type-check, test
@@ -34,7 +31,6 @@ jobs:
         run: mypy src
       - name: Pytest
         run: pytest -q
-
   ui:
     name: Static UI checks
     runs-on: ubuntu-latest
@@ -71,7 +67,6 @@ jobs:
           if grep -nE 'localStorage\.|sessionStorage\.|indexedDB\.' agent_gateway/src/gateway/ui/static/app.js; then
             echo "persistent browser storage found in UI"; exit 1
           fi
-
   packaging:
     name: Version sync & packaging metadata
     runs-on: ubuntu-latest
@@ -94,7 +89,6 @@ jobs:
           grep -q "## \[$PY\]" CHANGELOG.md || { echo "CHANGELOG.md missing section for $PY" >&2; exit 1; }
           grep -q "## \[$PY\]" agent_gateway/CHANGELOG.md || { echo "agent_gateway/CHANGELOG.md missing section for $PY" >&2; exit 1; }
           echo "Version $PY synchronized across all sources"
-
   image:
     name: Build add-on image (amd64)
     runs-on: ubuntu-latest
@@ -126,5 +120,4 @@ jobs:
         env:
           IMAGE: ha-agent-gateway:ci
           SKIP_BUILD: "1"
-          SMOKE_DIAG_SIGNALS: "1"
         run: bash tools/startup-smoke/docker-smoke.sh

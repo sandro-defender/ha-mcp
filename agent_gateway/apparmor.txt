@@ -126,6 +126,17 @@ profile ha_agent_gateway flags=(attach_disconnected,mediate_deleted) {
   # Arbitrary root shell access is never granted by this profile: only the
   # add-on's own entrypoint and bounded tool argv vectors exist.
   # ---------------------------------------------------------------------------
+  # Scope sends to processes confined by this same profile: the S6 supervisor
+  # signalling run.sh/Python on shutdown, and the app signalling its own
+  # children.  Receives stay unrestricted so the container runtime can stop
+  # PID 1 from the host (the sender is unconfined there).
+  #
+  # A narrower `signal (send) set=(kill,term,int,hup,cont)` rule dropped onto
+  # the same line as an unrestricted receive did NOT authorise this: inside the
+  # container `kill -TERM <app pid>` returned EPERM, S6 could not stop the
+  # service, and Docker had to SIGKILL the container (exit 137).  The
+  # peer-scoped form below is what Home Assistant's example profile uses.
+  signal (send) peer=ha_agent_gateway,
   signal (send) set=(kill,term,int,hup,cont),
   signal (receive),
 }
