@@ -13,9 +13,20 @@ LABEL \
   org.opencontainers.image.source="https://github.com/sandro-defender/ha-mcp" \
   org.opencontainers.image.version="${BUILD_VERSION}"
 
+# Send `docker stop` / Supervisor TERM, INT, QUIT and the other divertible
+# signals to the CMD (the gateway) instead of to PID 1.  s6-overlay's default
+# leaves the CMD unsignalled until "everything else is down and the container is
+# about to exit"; with a long-running app as the CMD that never happens and the
+# runtime has to SIGKILL the container (exit 137).
+#
+# Measured with the container smoke test: without this, `docker stop` ends in
+# 137 and the app logs no shutdown at all; with it, the app receives TERM,
+# uvicorn drains and the container exits 0.  See
+# docs/STARTUP_TROUBLESHOOTING.md.
 ENV LANG=C.UTF-8 \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    S6_CMD_RECEIVE_SIGNALS=1
 
 # Python runtime, privilege dropping, and build dependencies for any
 # dependency without a musllinux wheel.  The build dependencies are removed in

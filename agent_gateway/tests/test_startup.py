@@ -192,6 +192,29 @@ def test_profile_still_drops_privileges_before_the_application() -> None:
     assert 'if [ "$(id -u)" = "0" ]' in RUN_SH
 
 
+def test_cmd_receives_stop_signals() -> None:
+    """s6-overlay only forwards stop signals to the CMD when told to.
+
+    With the default (0) the CMD is killed last, "when everything else is down
+    and the container is about to exit"; a long-running app as the CMD never
+    gets TERM, so `docker stop` ends in SIGKILL (exit 137).  Verified with the
+    container smoke test -- see docs/STARTUP_TROUBLESHOOTING.md.
+    """
+
+    assert "S6_CMD_RECEIVE_SIGNALS=1" in DOCKERFILE
+
+
+def test_profile_leaves_signals_unmediated() -> None:
+    """A `signal` rule pair made in-container TERM return EPERM.
+
+    The app then could not be stopped by the supervisor and every stop ended in
+    SIGKILL.  Without signal rules AppArmor does not mediate signals (as with
+    Docker's default profile), which is what the lifecycle needs.
+    """
+
+    assert "\n  signal " not in APPARMOR
+
+
 def test_addon_does_not_override_the_s6_entrypoint() -> None:
     assert CONFIG["init"] is False  # the base image owns ENTRYPOINT /init
     assert "ENTRYPOINT" not in DOCKERFILE
