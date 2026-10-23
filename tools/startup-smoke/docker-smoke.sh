@@ -212,6 +212,30 @@ done
 log "Graceful shutdown"
 STEP="shutdown"
 
+# Temporary diagnostic (SMOKE_DIAG_SIGNALS=1): determine whether the app reacts
+# to SIGTERM at all, and whether S6 forwards it, before blaming either side.
+if [ "${SMOKE_DIAG_SIGNALS:-0}" = "1" ]; then
+  log "DIAG: process table"
+  docker exec "$CONTAINER" ps 2>&1 || true
+  PY_PID="$(docker exec "$CONTAINER" ps -o pid,args 2>/dev/null | grep -- '-m gateway' | grep -v -- 'grep' | awk '{print $1}' | head -1)"
+  echo "python pid inside container: ${PY_PID:-not found}"
+  if [ -n "$PY_PID" ]; then
+    docker exec "$CONTAINER" kill -TERM "$PY_PID" || true
+    for i in $(seq 1 12); do
+      sleep 1
+      st="$(docker inspect -f '{{.State.Running}}' "$CONTAINER")"
+      echo "after direct TERM to python ${i}s: running=$st"
+      [ "$st" = "true" ] || break
+    done
+    echo "--- logs around the direct signal ---"
+    docker logs "$CONTAINER" 2>&1 | tail -25 || true
+  fi
+  annotate warning "Startup smoke: signal diagnostic" "$(docker logs "$CONTAINER" 2>&1 | tail -25)"
+  cleanup
+  echo "RESULT: DIAG (not a pass/fail)"
+  exit 0
+fi
+
 # Snapshot the process table while the container shuts down: if PID 1 does not
 # exit, this shows which process is still alive and what it is running.
 SNAP=/tmp/hag-stop-snapshots.txt

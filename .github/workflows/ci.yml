@@ -126,4 +126,5 @@ jobs:
         env:
           IMAGE: ha-agent-gateway:ci
           SKIP_BUILD: "1"
+          SMOKE_DIAG_SIGNALS: "1"
         run: bash tools/startup-smoke/docker-smoke.sh
