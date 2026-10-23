@@ -193,6 +193,38 @@ GATEWAY_UID="$(printf '%s\n' "$GATEWAY_LINE" | awk '{print $2}')"
 echo "gateway process: $GATEWAY_LINE"
 [ "$GATEWAY_UID" = "1000" ] || fail "the gateway process is not running as uid 1000 (got '$GATEWAY_UID')"
 
+log "Management panel and status API inside container (/app/src)"
+STEP="ingress-api"
+INGRESS_OUT="$(docker exec -u 1000:1000 "$CONTAINER" env PYTHONPATH=/app/src /opt/venv/bin/python -c '
+import asyncio, httpx, shutil, tempfile
+from pathlib import Path
+from gateway.api.apps import build_admin_app
+from gateway.releases import find_changelog_path
+from gateway.runtime import Runtime
+from gateway.settings import load_settings
+
+assert find_changelog_path() == Path("/app/CHANGELOG.md"), find_changelog_path()
+tmp = Path(tempfile.mkdtemp(prefix="hag-smoke-"))
+rt = Runtime(load_settings(data_dir=tmp), kdf_memory_cost=1024, kdf_time_cost=1)
+rt.startup()
+async def probe() -> None:
+    headers = {"X-Remote-User-Id": "smoke-admin", "X-Gateway-Request": "1"}
+    transport = httpx.ASGITransport(app=build_admin_app(rt), client=("172.30.32.2", 50000))
+    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8099", headers=headers) as c:
+        for path in ("/", "/static/app.js", "/api/admin/status", "/api/admin/releases", "/api/admin/agent-access", "/api/admin/journal/project-state"):
+            r = await c.get(path)
+            assert r.status_code == 200, (path, r.status_code, r.text[:200])
+asyncio.run(probe())
+rt.shutdown()
+shutil.rmtree(tmp, ignore_errors=True)
+print("ingress-api: ok")
+' 2>&1)" || fail "management API probe inside container failed: $INGRESS_OUT"
+echo "$INGRESS_OUT"
+case "$INGRESS_OUT" in
+  *"ingress-api: ok"*) ;;
+  *) fail "management API probe did not report ok" ;;
+esac
+
 log "Readiness after in-place restart"
 STEP="restart"
 docker restart "$CONTAINER" >/dev/null

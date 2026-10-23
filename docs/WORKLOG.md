@@ -5,6 +5,67 @@
 > Runtime detail lives in the gateway Project Journal; this file is the
 > repository-side mirror (`AGENTS.md` §2).
 
+## 2026-10-23 — Fix Ingress panel `IndexError: 4` on `/api/admin/status` inside container (0.4.1)
+
+**Agent/session:** Arena coding agent, branch `arena/91b312ba-ha-mcp`.
+
+**Context (real HA OS feedback on 0.4.0):**
+- User's Home Assistant OS log confirmed 0.4.0's S6-Overlay AppArmor rules
+  succeeded (`legacy-services successfully started`, `gateway started
+  version=0.4.0 ingress_port=8099 agent_port=8098`, `/healthz -> 200`, and
+  Ingress `GET /`, `/static/styles.css`, `/static/app.js` → `200`; earlier
+  `can't open '/init'` lines at the top of the log were retained journald
+  history from pre-0.4.0 boots).
+- Opening the Ingress panel immediately failed on `GET /api/admin/status` with
+  `ERROR gateway.api.errors unhandled request error type=IndexError
+  path=/api/admin/status` (`[exception IndexError: 4]`), causing the UI to
+  render *"The gateway is not reachable / the request could not be completed"*.
+
+**Root cause & changes:**
+- Inside the container `run.sh` sets `PYTHONPATH=/app/src`, so
+  `gateway.releases.__file__` resolves to `/app/src/gateway/releases.py`, whose
+  `Path.parents` sequence has length 4 (`0..3`). `find_changelog_path()`
+  indexed `here.parents[4]` directly (which worked on deeper host/CI checkout
+  paths with ≥5 parents, and was never hit by `docker-smoke.sh` because it only
+  probed `/healthz` and `/readyz`).
+- `agent_gateway/src/gateway/releases.py`: replaced fixed `here.parents[4]` /
+  `here.parents[3]` indexing with `itertools.islice(here.parents, 5)` (skipping
+  filesystem root) and `OSError` guards around `Path.is_file()`.
+- `agent_gateway/src/gateway/api/middleware.py`: `AdminGateMiddleware` now
+  accepts `Origin` matching `X-Forwarded-Host` (set by Home Assistant Core's
+  Ingress proxy behind reverse proxies / Cloudflare Tunnel / Nabu Casa) in
+  addition to `Host`, and normalizes default `:80`/`:443` ports while keeping
+  the Supervisor peer IP gate, `X-Remote-User-Id`, `X-Gateway-Request: 1`, and
+  `Sec-Fetch-Site` enforcement intact.
+- `agent_gateway/src/gateway/ui/static/app.js`: `renderFatal()` now
+  distinguishes HTTP 5xx internal errors (with `request_id` and add-on log
+  pointer) from 401/403 Ingress restrictions and network unreachability.
+- `agent_gateway/Dockerfile`, `agent_gateway/apparmor.txt`,
+  `tools/startup-smoke/docker-smoke.sh`: added `/app/ r,` and `/opt/venv/ r,`,
+  build-time `PYTHONPATH=/app/src` `find_changelog_path()` + `Runtime.status()`
+  verification, and in-container Ingress management endpoint probes.
+- Synchronized version `0.4.0` → `0.4.1` across all 6 sources (`CHANGELOG.md`
+  and `agent_gateway/CHANGELOG.md` verified byte-identical in
+  `tests/test_packaging.py`).
+
+**Verified (sandbox: Python 3.11.2, Node 22.22.3):**
+- Direct reproduction before fix (`__file__ = "/app/src/gateway/releases.py"`) →
+  `IndexError(4)`; after fix → `200 OK` on `/api/admin/status`,
+  `/api/admin/releases`, `/api/admin/diagnostics` across `/app/src/gateway/releases.py`,
+  `/opt/gateway/releases.py`, and `/releases.py`.
+- `.venv/bin/ruff check agent_gateway/src agent_gateway/tests` → clean.
+- `.venv/bin/ruff format --check agent_gateway/src agent_gateway/tests` → 73 files formatted.
+- `(cd agent_gateway && ../.venv/bin/mypy src)` → clean (55 files, `--strict`).
+- `.venv/bin/pytest -q` → **329 passed**.
+- `node --check` on `app.js` and `agent.js` → clean; `bash -n` on `run.sh` and
+  `docker-smoke.sh` → clean.
+- `(cd tools/ui-smoke && npm test)` → all 4 jsdom harnesses PASS (including new
+  HTTP 500 boot error + retry recovery assertions).
+- `.venv/bin/python tools/startup-smoke/smoke.py` → PASS (2 start/stop cycles).
+
+**Not run:** Docker build / `docker-smoke.sh` (no Docker daemon in sandbox;
+runs in GitHub Actions `image` job) and live Home Assistant OS 0.4.1 upgrade.
+
 ## 2026-10-23 — S6 startup root cause + temporary agent access broker (0.4.0)
 
 **Agent/session:** Arena coding agent, branch `arena/09933ac1-ha-mcp` (PR #7).

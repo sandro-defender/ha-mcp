@@ -121,6 +121,31 @@ async def test_origin_must_match_the_request_host(runtime: Runtime) -> None:
     assert accepted.status_code == 200
 
 
+async def test_origin_matches_forwarded_host_behind_ingress_reverse_proxy(runtime: Runtime) -> None:
+    proxied = {
+        **ADMIN_HEADERS,
+        "Host": "127.0.0.1:8123",
+        "X-Forwarded-Host": "ha.example.com:443",
+        "Origin": "https://ha.example.com",
+        "Sec-Fetch-Site": "same-origin",
+    }
+    async with admin_http(runtime, headers=proxied) as client:
+        accepted = await client.post("/api/admin/vault/lock", json={})
+    assert accepted.status_code == 200
+
+    cross_origin_proxied = {
+        **ADMIN_HEADERS,
+        "Host": "127.0.0.1:8123",
+        "X-Forwarded-Host": "ha.example.com",
+        "Origin": "https://evil.example",
+        "Sec-Fetch-Site": "same-origin",
+    }
+    async with admin_http(runtime, headers=cross_origin_proxied) as client:
+        rejected = await client.post("/api/admin/vault/lock", json={})
+    assert rejected.status_code == 403
+    assert rejected.json()["error"]["code"] == "origin_rejected"
+
+
 async def test_oversized_management_body_is_rejected(runtime: Runtime) -> None:
     limit = runtime.settings.max_json_body_bytes
     async with admin_http(runtime) as client:

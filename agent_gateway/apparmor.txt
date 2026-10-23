@@ -90,8 +90,10 @@ profile ha_agent_gateway flags=(attach_disconnected,mediate_deleted) {
   /usr/lib/** mr,
   /usr/libexec/** mr,
   /usr/local/lib/** mr,
+  /opt/venv/ r,
   /opt/venv/** mr,
   /opt/venv/bin/** mrix,
+  /app/ r,
   /app/** r,
 
   # ---------------------------------------------------------------------------

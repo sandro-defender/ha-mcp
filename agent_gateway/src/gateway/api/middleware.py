@@ -250,7 +250,10 @@ class AdminGateMiddleware:
             origin = _header(scope, b"origin")
             if origin:
                 host = _header(scope, b"host") or ""
-                if not _same_origin(origin, host):
+                forwarded_host = (_header(scope, b"x-forwarded-host") or "").split(",")[0].strip()
+                if not _same_origin(origin, host) and not (
+                    forwarded_host and _same_origin(origin, forwarded_host)
+                ):
                     await _send_json(
                         send, 403, {"error": {"code": "origin_rejected", "message": "origin is not allowed"}}
                     )
@@ -299,10 +302,14 @@ def _same_origin(origin: str, host: str) -> bool:
         return False
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         return False
+    default_port = 443 if parsed.scheme == "https" else 80
     origin_netloc = parsed.hostname.lower()
-    if parsed.port and parsed.port not in {80, 443}:
+    if parsed.port and parsed.port != default_port:
         origin_netloc = f"{origin_netloc}:{parsed.port}"
-    return origin_netloc == host.lower()
+    host_netloc = host.strip().lower()
+    if host_netloc.endswith(f":{default_port}"):
+        host_netloc = host_netloc[: -len(f":{default_port}")]
+    return bool(host_netloc) and origin_netloc == host_netloc
 
 
 #: Exact paths on the agent listener that must work before a session token

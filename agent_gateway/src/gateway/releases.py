@@ -14,6 +14,7 @@ Update checks are local-first and privacy-respecting:
 
 from __future__ import annotations
 
+import itertools
 import json
 import re
 from pathlib import Path
@@ -106,19 +107,31 @@ def is_newer_version(candidate: str, reference: str) -> bool:
 
 
 def find_changelog_path() -> Path | None:
-    """Locate `CHANGELOG.md` across repo checkout, add-on dir, or container paths."""
+    """Locate `CHANGELOG.md` across repo checkout, add-on dir, or container paths.
+
+    Inside the add-on container `run.sh` sets `PYTHONPATH=/app/src`, so
+    `__file__` resolves to `/app/src/gateway/releases.py` (only 4 parent
+    levels: `/app/src/gateway`, `/app/src`, `/app`, `/`).  Never index fixed
+    positions in `here.parents` that may exceed the path depth.
+    """
 
     here = Path(__file__).resolve()
     candidates = [
-        here.parents[4] / "CHANGELOG.md",  # repo root: /home/user/ha-mcp/CHANGELOG.md
-        here.parents[3] / "CHANGELOG.md",  # add-on dir: /home/user/ha-mcp/agent_gateway/CHANGELOG.md
+        *(parent / "CHANGELOG.md" for parent in itertools.islice(here.parents, 5) if parent != parent.parent),
         Path("/app/CHANGELOG.md"),
         Path.cwd() / "CHANGELOG.md",
         Path.cwd() / "agent_gateway" / "CHANGELOG.md",
     ]
+    seen: set[Path] = set()
     for path in candidates:
-        if path.is_file():
-            return path
+        if path in seen:
+            continue
+        seen.add(path)
+        try:
+            if path.is_file():
+                return path
+        except OSError:
+            continue
     return None
 
 

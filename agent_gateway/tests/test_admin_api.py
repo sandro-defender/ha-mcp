@@ -423,3 +423,57 @@ async def test_purge_reports_deleted_counts(admin_unlocked: httpx.AsyncClient) -
 async def test_read_endpoints_require_admin_principal(admin: httpx.AsyncClient, path: str) -> None:
     response = await admin.get(path)
     assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "shallow_module_path",
+    [
+        "/app/src/gateway/releases.py",
+        "/opt/gateway/releases.py",
+        "/releases.py",
+    ],
+)
+async def test_status_and_releases_succeed_at_container_path_depths(
+    admin: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    shallow_module_path: str,
+) -> None:
+    """Regression: `/app/src/gateway/releases.py` has only 4 parents (`IndexError: 4`)."""
+
+    import gateway.releases as releases_mod
+
+    monkeypatch.setattr(releases_mod, "__file__", shallow_module_path)
+    monkeypatch.chdir(tmp_path)
+
+    status_resp = await admin.get("/api/admin/status")
+    assert status_resp.status_code == 200, status_resp.text
+    assert status_resp.json()["version"]
+
+    releases_resp = await admin.get("/api/admin/releases")
+    assert releases_resp.status_code == 200, releases_resp.text
+    assert releases_resp.json()["installed_version"]
+
+    diag_resp = await admin.get("/api/admin/diagnostics")
+    assert diag_resp.status_code == 200, diag_resp.text
+
+
+def test_find_changelog_path_tolerates_permission_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import gateway.releases as releases_mod
+
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text("# Changelog\n\n## [0.4.1] - 2026-10-23\n", encoding="utf-8")
+
+    monkeypatch.setattr(releases_mod, "__file__", "/app/src/gateway/releases.py")
+    monkeypatch.chdir(tmp_path)
+    real_is_file = Path.is_file
+
+    def guarded_is_file(self: Path) -> bool:
+        if str(self).startswith("/app/"):
+            raise PermissionError("simulated AppArmor denial")
+        return real_is_file(self)
+
+    monkeypatch.setattr(Path, "is_file", guarded_is_file)
+    assert releases_mod.find_changelog_path() == changelog

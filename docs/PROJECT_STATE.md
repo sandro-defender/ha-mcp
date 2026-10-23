@@ -6,11 +6,12 @@
 > Runtime records: the gateway Project Journal (`docs/JOURNAL.md`).
 
 - **Last updated:** 2026-10-23 by Arena coding agent (session
-  `arena/09933ac1-ha-mcp`, PR #7)
-- **Branch:** `arena/09933ac1-ha-mcp` · 0.4.0 changes committed (`87c4b6d`)
-  and pushed; Docker build and HA OS verification still pending.
-- **Version:** 0.4.0 (synced across config/pyproject/Dockerfile/`__init__`/
-  both CHANGELOGs; not yet released)
+  `arena/91b312ba-ha-mcp`)
+- **Branch:** `arena/91b312ba-ha-mcp` · 0.4.1 fix for `/api/admin/status`
+  `IndexError: 4` inside `/app/src/gateway`, reverse-proxied Ingress `Origin`
+  check, truthful 5xx boot error UI, and build/smoke status gates.
+- **Version:** 0.4.1 (synced across config/pyproject/Dockerfile/`__init__`/
+  both CHANGELOGs)
 
 ## Purpose and architecture
 
