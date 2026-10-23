@@ -122,21 +122,20 @@ profile ha_agent_gateway flags=(attach_disconnected,mediate_deleted) {
   /dev/shm/** rw,
 
   # ---------------------------------------------------------------------------
-  # Process management from the S6 supervisor and the parent shell.
-  # Arbitrary root shell access is never granted by this profile: only the
-  # add-on's own entrypoint and bounded tool argv vectors exist.
-  # ---------------------------------------------------------------------------
-  # Scope sends to processes confined by this same profile: the S6 supervisor
-  # signalling run.sh/Python on shutdown, and the app signalling its own
-  # children.  Receives stay unrestricted so the container runtime can stop
-  # PID 1 from the host (the sender is unconfined there).
+  # Signals are intentionally NOT mediated by this profile.
   #
-  # A narrower `signal (send) set=(kill,term,int,hup,cont)` rule dropped onto
-  # the same line as an unrestricted receive did NOT authorise this: inside the
-  # container `kill -TERM <app pid>` returned EPERM, S6 could not stop the
-  # service, and Docker had to SIGKILL the container (exit 137).  The
-  # peer-scoped form below is what Home Assistant's example profile uses.
-  signal (send) peer=ha_agent_gateway,
-  signal (send) set=(kill,term,int,hup,cont),
-  signal (receive),
+  # Measured on a container started with exactly these rules:
+  #   in-container:  kill -0 / kill -TERM <app pid> -> Operation not permitted
+  #   host side:     kill -TERM <app pid>           -> clean app shutdown
+  # i.e. an S6 supervisor confined by this profile could not signal the app it
+  # supervises, so S6 could not stop the service and Docker SIGKILLed the
+  # container (exit 137).  Both `signal (send) set=(...)` and the example
+  # profile's `signal (send) peer=<profile>` form failed the same way; the
+  # receive side of a rule pair is what denied the delivery.
+  #
+  # Signal confinement *inside* one container buys nothing: every process in it
+  # (S6, run.sh, the app) is the same trust domain, and Docker's own default
+  # profile grants this too.  The boundary this profile defends is the
+  # filesystem, the capability set and the network -- those stay confined below.
+  # ---------------------------------------------------------------------------
 }
