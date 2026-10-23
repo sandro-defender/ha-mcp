@@ -4,7 +4,7 @@ A Home Assistant OS add-on that lets AI agents read and (with explicit human
 approval) act on Home Assistant, Proxmox VE, and restricted SSH targets
 **without ever receiving the underlying credentials**.
 
-Version 0.3.1 · experimental · not security-audited.
+Version 0.4.0 · experimental · not security-audited.
 
 ## Install
 

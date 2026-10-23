@@ -3,7 +3,7 @@
 ## Symptom
 
 Home Assistant lists **Home Assistant Agent Gateway** at `0.1.0` forever, even
-though `agent_gateway/config.yaml` on `main` says `0.3.1`, and there is no
+though `agent_gateway/config.yaml` on `main` says `0.4.0`, and there is no
 **Update** button.
 
 ## Cause
@@ -53,7 +53,7 @@ git clone https://github.com/sandro-defender/ha-addons.git
 cd ha-addons
 git submodule update --init --remote --depth 1 -- ha-mcp
 git add ha-mcp
-git commit -m "Update ha-mcp to 0.3.1"
+git commit -m "Update ha-mcp to 0.4.0"
 git push
 ```
 
@@ -69,7 +69,7 @@ Then make Home Assistant re-read the repository:
 (or **Reload**). Supervisor also does this by itself roughly once a day.
 
 After that, **Settings → Add-ons → Home Assistant Agent Gateway** shows
-`0.3.1` with an **Update** button.
+`0.4.0` with an **Update** button.
 
 ## Fix (permanent)
 

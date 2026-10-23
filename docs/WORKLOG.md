@@ -5,6 +5,41 @@
 > Runtime detail lives in the gateway Project Journal; this file is the
 > repository-side mirror (`AGENTS.md` §2).
 
+## 2026-10-23 — S6 startup root cause + temporary agent access broker (0.4.0)
+
+**Agent/session:** Arena coding agent, branch `arena/09933ac1-ha-mcp` (PR #7).
+
+**Startup.** Chain: Supervisor → `/init` → `s6-overlay-suexec` → `preinit` /
+`stage0` → `rc.init` → `/run.sh`. Every S6 entry is a `#!/bin/sh` script, so
+`/bin/sh` must **read** it for the kernel's shebang execution; the custom
+profile replaced the Supervisor default without covering the whole chain,
+producing `can't open …: Permission denied` and the downstream
+`s6-overlay-suexec … exit code 2`. The profile now grants `rix` to `/init`,
+`/package/**`, `/command/**`, `/etc/s6-overlay/**`, the cont-init/services
+trees and `/run/s6`; `mr` for libs/venv; writes only under `/data`, `/tmp`,
+`/run`, `/dev`. The Dockerfile fails the build if the chain is unreadable, and
+`run.sh` keeps the root-prepare → `su-exec app:app` handoff.
+
+**Broker.** Schema v4 (additive `agents` columns + digest-only
+`session_handoffs`). Issue → single-use handoff (`hag_h_…`, URL fragment
+only) → `/agent` redeem → `hag_` session token (SHA-256 at rest) →
+REST/MCP through the same policy path. Sessions carry connection allowlists,
+read/write classes (destructive rejected), generated policy and expiry; the
+restart policy revokes temporary sessions, expires approvals, purges handoffs
+and bumps a persisted epoch without touching upstream secrets. New 12th panel
+section **Agent Access**.
+
+**Verified:** `pytest -q` → 319 passed; `ruff check` clean; `ruff format
+--check` 73 files; `mypy src` success; `tools/startup-smoke/smoke.py` PASS
+(2 cycles, SIGTERM exit 0, restart); four jsdom harnesses via `npm test`
+exit 0; `node --check` on both JS bundles.
+
+**Not run:** Docker/OCI image build, real AppArmor enforcement, HA OS install,
+live HA/Proxmox/SSH, real browser. The root cause is statically inferred from
+the pinned s6-overlay 3.2.3.2 and Supervisor sources; there was no local
+reproduction. `tools/startup-smoke/docker-smoke.sh` is the gate on a
+Docker-capable host.
+
 ## 2026-10-22 — `/init` AppArmor read permission follow-up (0.3.1)
 
 **Agent/session:** Arena coding agent, branch `arena/100263ca-ha-mcp`.

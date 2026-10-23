@@ -52,13 +52,15 @@ default profile for this add-on (`apparmor.txt` present → Supervisor loads it
 and runs the container with `--security-opt apparmor=<add-on slug>`). The
 profile granted that S6 chain execute-only or nothing at all:
 
-- 0.2.1: no rule for `/init`, `/package/**`, `/command/**`.
-- 0.3.1: `/init ix` — execution allowed, read denied.
+- 0.2.1: no rule for `/init`, `/package/**`, `/command/**` — the first failure
+  is `/bin/sh: can't open '/init'`.
+- 0.3.1: `/init rix` (read fixed) but `/package/** ix` and `/command/** ix`
+  (execute-only), so the failure moved one stage later to
+  `/bin/sh: can't open '/package/admin/s6-overlay-3.2.3.2/libexec/preinit'`.
 
-Hence `/bin/sh` could not read `/init`, and after the 0.3.1 rule, the same
-failure moved to `/package/admin/s6-overlay-*/libexec/preinit`. Both script
-files are readable and executable in the image; the denial came from AppArmor,
-not from file modes, ownership, or a mounted `noexec` filesystem.
+Both messages appear in the report because the add-on was updated between
+attempts. Both files are readable and executable in the image; the denial came
+from AppArmor, not from file modes, ownership, or a mounted `noexec` filesystem.
 
 The fix is therefore a profile fix, **not** a file-mode fix: no `chmod`, no
 `chown`, no replacement of `/init`, no `init: true`, no AppArmor disablement.
