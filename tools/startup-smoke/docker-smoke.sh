@@ -210,10 +210,35 @@ done
 
 log "Graceful shutdown"
 STEP="shutdown"
-docker stop --time 20 "$CONTAINER" >/dev/null || fail "docker stop failed"
+
+# Snapshot the process table while the container shuts down: if PID 1 does not
+# exit, this shows which process is still alive and what it is running.
+SNAP=/tmp/hag-stop-snapshots.txt
+: > "$SNAP"
+(
+  for _ in $(seq 1 15); do
+    {
+      printf -- '--- %s ---\n' "$(date -u +%H:%M:%S)"
+      docker top "$CONTAINER" -eo pid,uid,args 2>&1 || true
+    } >> "$SNAP" 2>&1
+    sleep 2
+  done
+) &
+SNAP_JOB=$!
+
+docker stop --time 20 "$CONTAINER" >/dev/null || echo "docker stop returned non-zero"
+wait "$SNAP_JOB" 2>/dev/null || true
+
 EXIT_CODE="$(docker inspect -f '{{.State.ExitCode}}' "$CONTAINER")"
 docker logs "$CONTAINER" 2>&1 | tail -20 || true
-[ "$EXIT_CODE" = "0" ] || fail "container exit code ${EXIT_CODE} after SIGTERM (expected 0)"
+if [ "$EXIT_CODE" != "0" ]; then
+  DETAILS="exit=$EXIT_CODE after docker stop --time 20 (137 = SIGKILL)."$'\n'
+  DETAILS+="--- process snapshots during stop ---"$'\n'"$(tail -30 "$SNAP")"$'\n'
+  DETAILS+="--- last application log lines ---"$'\n'"$(docker logs "$CONTAINER" 2>&1 | grep -iE 'shutdown|signal|exited|uvicorn|gateway' | tail -15 || true)"
+  printf '%s\n' "$DETAILS" >&2
+  annotate error "Startup smoke: shutdown did not complete" "$DETAILS"
+  fail "container exit code ${EXIT_CODE} after SIGTERM (expected 0)"
+fi
 
 echo
 echo "RESULT: PASS (S6 stage 2, health, readiness, uid 1000, restart, graceful shutdown; AppArmor=$AA_MODE)"
