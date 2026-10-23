@@ -2,7 +2,7 @@ ARG BUILD_FROM=ghcr.io/home-assistant/base:3.24
 FROM ${BUILD_FROM}
 
 ARG BUILD_ARCH
-ARG BUILD_VERSION=0.3.1
+ARG BUILD_VERSION=0.4.0
 
 LABEL \
   io.hass.name="Home Assistant Agent Gateway" \
@@ -13,9 +13,21 @@ LABEL \
   org.opencontainers.image.source="https://github.com/sandro-defender/ha-mcp" \
   org.opencontainers.image.version="${BUILD_VERSION}"
 
+# Shutdown budget.  At the end of the shutdown sequence s6 sends TERM to the
+# remaining processes (including the CMD, which is where the gateway runs) and
+# waits this long before KILL.  The default 3000 ms is too tight for uvicorn to
+# drain two listeners; 10 s stays inside the 10 s default stop timeout that
+# Docker and the Supervisor use, because the app exits on its own well before
+# the budget is exhausted.
+#
+# Note: S6_CMD_RECEIVE_SIGNALS is deliberately NOT used.  s6-overlay implements
+# it with `kill -s TERM -- <pid>` in its CMDSIG helper, and busybox `kill` (the
+# Alpine shell builtin) rejects `--` ("invalid number '--'"), so the signal is
+# never delivered and the container hangs.  Measured on the built image.
 ENV LANG=C.UTF-8 \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    S6_KILL_GRACETIME=10000
 
 # Python runtime, privilege dropping, and build dependencies for any
 # dependency without a musllinux wheel.  The build dependencies are removed in
@@ -37,6 +49,23 @@ RUN apk del .build-deps \
 
 COPY run.sh /run.sh
 RUN chmod 0755 /run.sh
+
+# Startup contract.  Fail the build (instead of the user's container) if the
+# S6-Overlay entrypoint chain is missing, or lost the read/execute bits that
+# the kernel + /bin/sh need for `#!/bin/sh` scripts.  A non-readable script is
+# what produces:
+#   /bin/sh: can't open '/init': Permission denied
+#   s6-overlay-suexec: fatal: child failed with exit code 2
+# The AppArmor profile in apparmor.txt grants the matching rix rules; neither
+# this check nor the profile chmods or replaces /init.
+RUN set -eu; \
+    test -x /init && test -r /init; \
+    preinit="$(ls -d /package/admin/s6-overlay-*/libexec/preinit)"; \
+    test -x "$preinit" && test -r "$preinit"; \
+    stage0="$(dirname "$preinit")/stage0"; \
+    test -x "$stage0" && test -r "$stage0"; \
+    su-exec app:app /opt/venv/bin/python -c \
+        "import argon2, asyncssh, cryptography, fastapi, gateway, uvicorn; print('gateway imports ok')"
 
 # The entrypoint starts as root only to fix ownership of the Supervisor-mounted
 # /data volume, then immediately drops to the unprivileged app user.

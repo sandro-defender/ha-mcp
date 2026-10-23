@@ -115,6 +115,32 @@ Invoke-RestMethod -Method Post -Uri "http://homeassistant.local:8098/mcp" -Heade
 - `GET /api/v1/approvals/{approval_id}` — Poll approval status (`pending`, `approved`, `rejected`, `expired`, `used`)
 - `/api/v1/journal/*` — Project Journal (requires `journal:read`/`journal:write` scopes **and** a `journal.*` policy rule): project state, sessions, tasks, timeline/search, work entries, decisions, issues, test runs, handoff generation. Mirrored as connectionless `journal.*` MCP tools. See `docs/JOURNAL.md` in the repository.
 
+### Temporary agent access (Agent Access panel section, 0.4.0)
+
+For coding agents that should only get **short-lived, narrowly scoped** access,
+do not create a persistent agent identity. Use **Agent Access** instead:
+
+1. Set **Agent API base URL** to the address the agent host can reach, e.g.
+   `http://homeassistant.local:8098` (the agent listener, not the Ingress
+   address), and keep or change the restart policy.
+2. Pick the connections, scopes (`ha:*`, `proxmox:*`, `ssh:*`, `journal:*`) and
+   operation classes (`read` is mandatory, `write` optional, `destructive` is
+   never allowed), choose a lifetime, and generate.
+3. Give the agent the single-use handoff link (valid for 15 minutes). The agent
+   opens `http://<host>:8098/agent#code=…`; the page shows the session token
+   **once**, together with the REST base URL, MCP endpoint, expiry, and scope.
+4. Revoke the session when the agent is done. Revoking stops the token
+   immediately and expires its pending approvals. **Revoke all** does this for
+   every temporary session and requires typing `REVOKE ALL`.
+
+Upstream Home Assistant, Proxmox, and SSH credentials are never shown on
+either page and are never rotated by session revocation. With
+`agent_sessions_revoke_on_restart` on (default), every temporary session is
+revoked when the add-on restarts; agents request a new link.
+
+Detailed architecture, endpoint inventory, threat model, SSH restrictions, and
+verification status: [`docs/AGENT_ACCESS.md`](../docs/AGENT_ACCESS.md).
+
 ### Project Journal (panel section)
 
 The **Project Journal** section shows the persistent work journal agents write through the API above: current project state, prioritized next steps, a filterable timeline that separates *claimed* work from *verified* evidence (`automated_tests` / `integration_verified`), failed and blocked work, test-run evidence, active sessions, and previous handoffs. **Generate Handoff Prompt** builds a bounded continuation prompt from the stored records; review/edit it in the panel, then copy it into the next agent session. The panel never displays sample data — an empty journal shows empty states. Journal records are redacted before storage, cannot be edited or deleted through the UI/API, and are retained in `/data/gateway.db` (included in add-on backups; not part of the vault export).
@@ -130,13 +156,22 @@ The **Project Journal** section shows the persistent work journal agents write t
   - No Proxmox VE write or destructive tools in v0.2.0.
   - Home Assistant domains `hassio`, `homeassistant`, `shell_command`, `command_line`, `python_script`, `recorder`, `system_log`, and `persistent_notification` are hard-blocked even if a policy rule allows `*`.
 
-## Troubleshooting startup: `/bin/sh: can't open '/init': Permission denied`
+## Troubleshooting startup: `/bin/sh: can't open … Permission denied`
 
-Fixed in 0.3.1. The custom AppArmor profile now grants read and inherited
-execute access (`rix`) to the base image's S6-Overlay `/init` entrypoint. Some
-Supervisor installations invoke `/init` through `/bin/sh`, which must read the
-entrypoint; execute-only access can produce `/bin/sh: can't open '/init':
-Permission denied`. Update to 0.3.1 or later; do not work around this by
-disabling AppArmor, setting `init: true`, or `chmod`-ing `/init`. Architecture notes: Home Assistant WebSocket is not used (REST
-only), and Proxmox write/power/delete operations are intentionally not
-implemented — see `docs/IMPLEMENTATION_AUDIT.md`.
+Fixed in 0.4.0. Every S6-Overlay file in the chain (`/init`,
+`/package/admin/s6-overlay-*/libexec/preinit`, `stage0`, `/run/s6/basedir/bin/init`,
+cont-init and services scripts) is a `#!/bin/sh` script. The kernel starts
+`/bin/sh <script>`, so the interpreter must **read** the file; execute-only
+AppArmor rules (`ix`) still produce `/bin/sh: can't open '…': Permission
+denied`, followed by `s6-overlay-suexec: fatal: child failed with exit code 2`.
+The profile now grants `rix` to the whole chain and the Dockerfile fails the
+build if the chain is not readable and executable.
+
+Update to 0.4.0 or later. Do not work around this by disabling AppArmor,
+setting `init: true`, or `chmod`-ing `/init`; those hide the problem instead of
+fixing it. Full analysis, verification steps, and the list of what still needs
+a real Home Assistant OS host: [`docs/STARTUP_TROUBLESHOOTING.md`](../docs/STARTUP_TROUBLESHOOTING.md).
+
+Architecture notes: Home Assistant WebSocket is not used (REST only), and
+Proxmox write/power/delete operations are intentionally not implemented — see
+`docs/IMPLEMENTATION_AUDIT.md`.

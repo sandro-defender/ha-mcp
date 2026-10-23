@@ -39,6 +39,7 @@ from .models import (
     TASK_TRANSITIONS,
     UNVERIFIED_LEVELS,
     VERIFIED_LEVELS,
+    WRITE_TOOLS,
     DecisionRequest,
     HandoffGenerateRequest,
     IssueRequest,
@@ -1552,6 +1553,12 @@ def authorize_agent_journal(
     if not agent.has_scope(scope):
         deny(f"agent lacks the {scope} scope")
         raise PolicyDenied(f"agent lacks the {scope} scope")
+    if tool in WRITE_TOOLS and not agent.allows_operation_class("write"):
+        # Temporary sessions issued read-only can never write journal records,
+        # even if a scope were somehow widened later.  Persistent identities
+        # allow every class, so this is a no-op for them.
+        deny("this session does not allow write operations")
+        raise PolicyDenied("this session does not allow write operations")
     decision = policies.evaluate(
         PolicyRequest(agent_id=agent.id, tool=tool, connection_id=None, risk="read", targets={})
     )

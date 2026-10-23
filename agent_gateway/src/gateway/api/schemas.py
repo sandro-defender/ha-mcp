@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -111,6 +111,40 @@ class ReleaseCheckRequest(StrictRequest):
 
 class ReleaseAcknowledgeRequest(StrictRequest):
     version: str | None = Field(default=None, max_length=32)
+
+
+class AgentSessionIssueRequest(StrictRequest):
+    name: str = Field(min_length=3, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9 ._:-]{2,63}$")
+    scopes: list[str] = Field(min_length=1, max_length=20)
+    connection_ids: list[str] = Field(default_factory=list, max_length=50)
+    operation_classes: list[Literal["read", "write"]] = Field(
+        default_factory=lambda: cast(list[Literal["read", "write"]], ["read"]),
+        min_length=1,
+        max_length=2,
+    )
+    ttl_seconds: int | None = Field(default=None, ge=300, le=604800)
+    revoke_previous: bool = True
+    notes: str = Field(default="", max_length=500)
+
+
+class AgentSessionRevokeRequest(StrictRequest):
+    reason: str = Field(default="", max_length=200)
+
+
+class AgentSessionRevokeAllRequest(StrictRequest):
+    confirm: str = Field(min_length=1, max_length=40)
+    reason: str = Field(default="", max_length=200)
+
+
+class AgentAccessSettingsRequest(StrictRequest):
+    default_ttl_seconds: int | None = Field(default=None, ge=300, le=604800)
+    max_ttl_seconds: int | None = Field(default=None, ge=300, le=604800)
+    revoke_on_restart: bool | None = None
+    agent_api_base_url: str | None = Field(default=None, max_length=300)
+
+
+class AgentHandoffRedeemRequest(StrictRequest):
+    code: str = Field(min_length=20, max_length=200)
 
 
 class OperationRequest(StrictRequest):

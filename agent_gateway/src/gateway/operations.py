@@ -131,6 +131,14 @@ class OperationService:
             self._audit_denied(agent, tool_name, connection_id, params, "missing scope", request_id)
             raise PolicyDenied(f"agent lacks the {spec.scope} scope")
 
+        # Temporary sessions are further restricted by the allowlist and the
+        # operation classes chosen when the administrator issued the session.
+        # These values come from the database, never from the request.
+        constraint_error = self._session_constraint(agent, spec, connection_id)
+        if constraint_error:
+            self._audit_denied(agent, tool_name, connection_id, params, constraint_error, request_id)
+            raise PolicyDenied(constraint_error)
+
         validated = self.tools.validate_params(spec, params)
         normalized = validated.model_dump(mode="json")
         targets = spec.targets(validated)
@@ -237,7 +245,7 @@ class OperationService:
 
         # Revalidate everything immediately before the sensitive operation.
         try:
-            self.agents.get_principal(agent.id)
+            fresh = self.agents.get_principal(agent.id)
         except GatewayError as exc:
             self._fail_operation(operation_id, "agent_disabled")
             self.audit.record(
@@ -254,6 +262,11 @@ class OperationService:
                 request_id=request_id,
             )
             raise PolicyDenied("agent is no longer enabled") from exc
+        constraint_error = self._session_constraint(fresh, spec, connection_id)
+        if constraint_error:
+            self._fail_operation(operation_id, "policy_denied")
+            self._audit_denied(agent, tool_name, connection_id, params, constraint_error, request_id)
+            raise PolicyDenied(constraint_error)
         if self.settings.get_bool("emergency_disabled"):
             self._fail_operation(operation_id, "agent_access_disabled")
             raise EmergencyDisabled()
@@ -430,6 +443,17 @@ class OperationService:
         }
 
     # ------------------------------------------------------------ internals
+
+    def _session_constraint(
+        self, principal: AgentPrincipal, spec: ToolSpec, connection_id: str
+    ) -> str | None:
+        """Return a deny reason when the session is narrower than the policy."""
+
+        if not principal.allows_operation_class(spec.risk):
+            return f"this session does not allow {spec.risk} operations"
+        if not principal.allows_connection(connection_id):
+            return "this session is not authorized for that connection"
+        return None
 
     def _evaluate(
         self, agent: AgentPrincipal, spec: ToolSpec, connection_id: str, targets: dict[str, list[str]]

@@ -21,4 +21,11 @@ npm test
 `panel_smoke.mjs` walks every navigation entry and opens the connection, policy,
 and approval dialogs. `panel_paths.mjs` covers vault setup, a wrong master
 password, the auto-unlock warning, approval submission, and policy validation.
-Both fail with a non-zero exit code if the panel logs a runtime error.
+`access_smoke.mjs` renders the Agent Access section, issues a temporary
+session, verifies the one-time handoff dialog, and revokes it through the
+confirmation dialog. All three fail with a non-zero exit code if the panel logs
+a runtime error.
+
+`agent_page_smoke.mjs` renders the agent-facing handoff page in jsdom with a
+stubbed redeem response and checks that the token, base URL, MCP endpoint, and
+one-time warning render while the URL fragment is stripped.

@@ -61,6 +61,7 @@
     ["connections", "Connections", "connections"],
     ["credentials", "Credentials", "key"],
     ["agents", "Agents", "shield"],
+    ["access", "Agent Access", "key"],
     ["tools", "Tools", "tools"],
     ["permissions", "Permissions", "shield"],
     ["approvals", "Approvals", "approvals"],
@@ -75,6 +76,7 @@
     connections: "Home Assistant, Proxmox VE, and restricted SSH profiles with actionable diagnostics.",
     credentials: "Encrypted vault — secrets are never displayed again after saving.",
     agents: "Per-agent identities, scopes, token lifecycle, and usage insights.",
+    access: "Temporary, single-use sessions for coding agents: handoff links, expiry, and revocation.",
     tools: "Tool groups and schemas — the same engine serves REST and MCP.",
     permissions: "Central policy documents, templates, and the live policy simulator.",
     approvals: "Single-use approvals bound to the exact operation, parameters, and policy revision.",
@@ -647,6 +649,7 @@
       else if (route === "connections") await viewConnections();
       else if (route === "credentials") await viewCredentials();
       else if (route === "agents") await viewAgents();
+      else if (route === "access") await viewAgentAccess();
       else if (route === "tools") await viewTools();
       else if (route === "permissions") await viewPermissions();
       else if (route === "approvals") await viewApprovals();
@@ -3135,6 +3138,315 @@
       await navigate("agents");
       showToken(result.token, result.agent.name);
     }); }).catch(function(e){ showErrors(form,"The agent was not created.",[{message:errorText(e)}]); });
+  }
+
+  /* ----------------------------------------------------------- agent access */
+
+  function fmtDuration(seconds) {
+    if (typeof seconds !== "number" || !isFinite(seconds)) return "—";
+    if (seconds <= 0) return "expired";
+    var days = Math.floor(seconds / 86400);
+    var hours = Math.floor((seconds % 86400) / 3600);
+    var minutes = Math.floor((seconds % 3600) / 60);
+    if (days) return days + "d " + hours + "h";
+    if (hours) return hours + "h " + minutes + "m";
+    return minutes + "m";
+  }
+
+  function accessStatusTone(status) {
+    if (status === "active") return "ok";
+    if (status === "pending") return "info";
+    if (status === "expiring_soon") return "warn";
+    return "danger";
+  }
+
+  function accessSessionCard(session) {
+    var conns = (session.connections || []).map(function (c) {
+      return '<span class="chip">' + esc(c.name) + (c.type ? ' <span class="mono">' + esc(c.type) + "</span>" : "") + "</span>";
+    }).join("");
+    var scopes = (session.scopes || []).map(function (s) {
+      return '<span class="chip" data-selected="true">' + esc(s) + "</span>";
+    }).join("");
+    var classes = (session.operation_classes || []).map(function (c) {
+      return '<span class="chip" data-tone="' + (c === "read" ? "ok" : "warn") + '">' + esc(c) + "</span>";
+    }).join("");
+    return '<div class="list-item"><div class="list-item-top"><span class="list-item-title">' +
+      icon("key", 16) + esc(session.name) + " " + badge(session.status, accessStatusTone(session.status)) +
+      (session.handoff_pending ? " " + badge("handoff pending", "info") : "") +
+      '</span><div class="button-row">' +
+      '<button type="button" class="button" data-size="sm" data-session-activity="' + esc(session.id) + '">' + icon("audit", 14) + "<span>Activity</span></button>" +
+      '<button type="button" class="button" data-size="sm" data-variant="danger" data-session-revoke="' + esc(session.id) + '"' +
+      (session.status === "revoked" ? " disabled" : "") + ">" + icon("close", 14) + "<span>Revoke</span></button>" +
+      "</div></div>" +
+      '<div class="chip-row mt-2">' + scopes + classes + "</div>" +
+      '<div class="detail-list mt-2">' +
+      '<div class="detail-row"><dt>Connections</dt><dd>' + (conns || "none") + "</dd></div>" +
+      '<div class="detail-row"><dt>Lifetime</dt><dd>' + esc(fmtDuration(session.issued_ttl_seconds || session.remaining_seconds)) +
+      " · remaining " + esc(fmtDuration(session.remaining_seconds)) + "</dd></div>" +
+      '<div class="detail-row"><dt>Created</dt><dd>' + esc(fmtDate(session.created_at)) + " by " + esc(session.created_by || "—") + "</dd></div>" +
+      '<div class="detail-row"><dt>Expires</dt><dd>' + esc(fmtDate(session.expires_at)) + "</dd></div>" +
+      '<div class="detail-row"><dt>Token</dt><dd class="mono">' + esc(session.token_prefix || "—") + " · last used " + (session.last_used_at ? esc(relTime(session.last_used_at)) : "never") + "</dd></div>" +
+      '<div class="detail-row"><dt>Activity</dt><dd>' + esc(session.requests_last_hour || 0) + " requests in the last hour</dd></div>" +
+      (session.revoked_at ? '<div class="detail-row"><dt>Revoked</dt><dd>' + esc(fmtDate(session.revoked_at)) + " · " + esc(session.revoked_reason || "") + "</dd></div>" : "") +
+      "</div></div>";
+  }
+
+  async function viewAgentAccess() {
+    var data = await api("agent-access");
+    var settings = data.settings || {};
+    var sessions = data.sessions || [];
+    var connections = data.connections || [];
+    var endpoints = data.endpoints || {};
+    var restart = data.restart_policy_result || {};
+    var baseUrl = settings.agent_api_base_url || "";
+    var minMinutes = Math.round((settings.min_ttl_seconds || 300) / 60);
+    var defaultMinutes = Math.round((settings.default_ttl_seconds || 3600) / 60);
+    var maxHours = Math.round((settings.max_ttl_seconds || 86400) / 3600);
+
+    var warning = "";
+    if (!baseUrl) {
+      warning = '<div class="notice" data-tone="warn">' + icon("alert", 18) +
+        "<div><strong>Set the agent API base URL</strong>The handoff link must point at the agent listener, not the Home Assistant Ingress address. " +
+        "Configure it below, for example <span class=\"code-hint\">http://homeassistant.local:8098</span>.</div></div>";
+    }
+
+    var reachable = endpoints.listener_reachable
+      ? badge("listener reachable", "ok")
+      : badge("listener unreachable", "danger");
+
+    var settingSummary = '<div class="detail-list"><div class="detail-row"><dt>Default lifetime</dt><dd>' + esc(fmtDuration(settings.default_ttl_seconds)) + "</dd></div>" +
+      '<div class="detail-row"><dt>Maximum lifetime</dt><dd>' + esc(fmtDuration(settings.max_ttl_seconds)) + "</dd></div>" +
+      '<div class="detail-row"><dt>Restart policy</dt><dd>' + (settings.revoke_on_restart ? "revoke temporary sessions on restart" : "retain temporary sessions on restart") + "</dd></div>" +
+      '<div class="detail-row"><dt>Agent page</dt><dd class="mono">' + esc(baseUrl ? baseUrl + "/agent" : "not configured") + "</dd></div>" +
+      '<div class="detail-row"><dt>MCP endpoint</dt><dd class="mono">' + esc((baseUrl || "<gateway>") + "/mcp") + "</dd></div>" +
+      '<div class="detail-row"><dt>REST base</dt><dd class="mono">' + esc((baseUrl || "<gateway>") + "/api/v1") + "</dd></div></div>";
+
+    var form = '<section class="card glass" aria-labelledby="issue-session-title"><div class="card-header"><h3 id="issue-session-title">Generate temporary access</h3>' + badge("single-use handoff", "info") + "</div>" +
+      '<p class="card-hint">The agent receives the session token on the agent page, never in the link itself. The link contains a one-time code and expires quickly.</p>' +
+      warning +
+      '<form class="form" id="access-form" novalidate>' +
+      '<div class="form-row"><div class="field"><label for="access-name">Session name</label>' +
+      '<input id="access-name" required maxlength="64" autocomplete="off" placeholder="codex-session-1" value="agent-session"></div>' +
+      '<div class="field"><label for="access-ttl">Lifetime (minutes)</label>' +
+      '<input id="access-ttl" type="number" min="' + minMinutes + '" max="' + maxHours * 60 + '" value="' + defaultMinutes + '">' +
+      '<p class="field-hint">Between ' + minMinutes + " minutes and " + maxHours + " hours.</p></div></div>" +
+      '<fieldset class="field plain-fieldset"><legend class="field-label mb-2">Authorized connections</legend>' +
+      '<div class="chip-row" id="access-connections">' +
+      (connections.length ? connections.map(function (c) {
+        return '<label class="chip" data-selected="false"><input type="checkbox" value="' + esc(c.id) + '" data-connection-type="' + esc(c.type) + '"><span>' + esc(c.name) + ' <span class="mono">' + esc(CONNECTION_LABELS[c.type] || c.type) + "</span></span></label>";
+      }).join("") : '<p class="field-hint">Create a connection first.</p>') +
+      '</div><p class="field-error" id="access-connections-error"></p></fieldset>' +
+      '<fieldset class="field plain-fieldset"><legend class="field-label mb-2">Scopes</legend>' +
+      '<div class="chip-row" id="access-scopes">' +
+      (data.scopes || []).map(function (s) {
+        return '<label class="chip" data-selected="false" title="' + esc(s.description || "") + '"><input type="checkbox" value="' + esc(s.id) + '"><span>' + esc(s.id) + "</span></label>";
+      }).join("") +
+      '</div><p class="field-hint">Scopes must match the selected connection types; the gateway rejects mismatches.</p>' +
+      '<p class="field-error" id="access-scopes-error"></p></fieldset>' +
+      '<fieldset class="field plain-fieldset"><legend class="field-label mb-2">Operation classes</legend><div class="chip-row" id="access-classes">' +
+      '<label class="chip" data-selected="true"><input type="checkbox" value="read" checked disabled><span>read (required)</span></label>' +
+      '<label class="chip" data-selected="false"><input type="checkbox" value="write"><span>write (approval required)</span></label>' +
+      '</div><p class="field-hint">Destructive operations can never be granted to a temporary session.</p></fieldset>' +
+      '<label class="check-row"><input type="checkbox" id="access-revoke-previous" checked> <span>Revoke all previous temporary sessions when this one is generated</span></label>' +
+      '<div class="button-row"><button type="submit" class="button" data-variant="primary" id="access-generate">' + icon("key", 16) + "<span>Generate access link</span></button>" +
+      '<button type="button" class="button" data-variant="danger" id="access-revoke-all" data-danger-zone="true">' + icon("close", 16) + "<span>Revoke all sessions</span></button></div>" +
+      "</form></section>";
+
+    var settingsForm = '<section class="card glass" aria-labelledby="access-settings-title"><div class="card-header"><h3 id="access-settings-title">Agent access settings</h3></div>' +
+      '<form class="form" id="access-settings-form" novalidate><div class="form-row">' +
+      '<div class="field"><label for="access-default-ttl">Default lifetime (minutes)</label><input id="access-default-ttl" type="number" min="' + minMinutes + '" max="' + maxHours * 60 + '" value="' + defaultMinutes + '"></div>' +
+      '<div class="field"><label for="access-max-ttl">Maximum lifetime (hours)</label><input id="access-max-ttl" type="number" min="' + Math.ceil(minMinutes / 60) + '" max="' + maxHours + '" value="' + maxHours + '"></div>' +
+      "</div>" +
+      '<div class="field"><label for="access-base-url">Agent API base URL</label>' +
+      '<input id="access-base-url" maxlength="300" autocomplete="off" placeholder="http://homeassistant.local:8098" value="' + esc(baseUrl) + '">' +
+      '<p class="field-hint">Externally reachable address of the agent listener (port 8098). No path, query, or credentials. Used for handoff links.</p></div>' +
+      '<label class="check-row"><input type="checkbox" id="access-restart-revoke"' + (settings.revoke_on_restart ? " checked" : "") + '> <span>Revoke every temporary session when the gateway restarts</span></label>' +
+      '<p class="field-hint">Revocation never rotates or deletes upstream Home Assistant, Proxmox, or SSH credentials.</p>' +
+      '<div class="button-row"><button type="submit" class="button" id="access-save-settings">Save settings</button></div></form></section>';
+
+    $("#section").innerHTML = warning + form + settingsForm +
+      '<section class="card glass" aria-labelledby="access-status-title"><div class="card-header"><h3 id="access-status-title">Listener and limits</h3>' +
+      reachable + "</div>" + settingSummary +
+      '<div class="detail-list mt-2"><div class="detail-row"><dt>Listener probe</dt><dd>' + esc(endpoints.detail || "not checked") +
+      " <span class=\"mono\">" + esc(endpoints.listener_url || "") + "</span></dd></div>" +
+      '<div class="detail-row"><dt>Last restart</dt><dd>' + esc(restart.policy || "not started") +
+      (typeof restart.revoked === "number" ? " · revoked " + esc(restart.revoked) + " session(s)" : "") + "</dd></div>" +
+      '<div class="detail-row"><dt>Active / pending</dt><dd>' + esc(data.active_count || 0) + " active · " + esc(data.pending_count || 0) + " awaiting handoff</dd></div></div>" +
+      '<p class="field-hint">' + (endpoints.note || "") + "</p>" +
+      '<div class="button-row mt-2"><button type="button" class="button" data-size="sm" id="access-recheck">' + icon("refresh", 14) + "<span>Re-check listener</span></button></div>" +
+      "</section>" +
+      '<section aria-labelledby="access-sessions-title"><div class="card-header"><h3 id="access-sessions-title">Sessions</h3>' + badge(String(sessions.length) + " total", "muted") + "</div>" +
+      '<div class="list mt-2">' + (sessions.length ? sessions.map(accessSessionCard).join("") : emptyState("No temporary sessions", "Generate a handoff link when an agent needs temporary access. Destructive operations are never granted.", "key")) + "</div></section>";
+
+    $$("#access-connections .chip, #access-scopes .chip, #access-classes .chip").forEach(function (chip) {
+      var input = $("input", chip);
+      var sync = function () {
+        chip.dataset.selected = String(input.checked);
+      };
+      chip.addEventListener("click", function (event) {
+        if (event.target !== input && !input.disabled) {
+          input.checked = !input.checked;
+          sync();
+        }
+      });
+      input.addEventListener("change", sync);
+    });
+
+    var formEl = $("#access-form");
+    formEl.addEventListener("submit", function (event) {
+      event.preventDefault();
+      issueAgentSession();
+    });
+    $("#access-revoke-all").addEventListener("click", revokeAllSessions);
+    $("#access-recheck").addEventListener("click", function () {
+      guarded(function () { return api("agent-access/reachability", { method: "POST", body: {} }); })
+        .then(function () { return loadRoute("access"); });
+    });
+    $("#access-settings-form").addEventListener("submit", function (event) {
+      event.preventDefault();
+      saveAgentAccessSettings();
+    });
+    $$("[data-session-revoke]").forEach(function (button) {
+      button.addEventListener("click", function () { revokeAgentSession(button.dataset.sessionRevoke); });
+    });
+    $$("[data-session-activity]").forEach(function (button) {
+      button.addEventListener("click", function () { openSessionActivity(button.dataset.sessionActivity); });
+    });
+  }
+
+  async function issueAgentSession() {
+    var connections = $$("#access-connections input:checked").map(function (input) { return input.value; });
+    var scopes = $$("#access-scopes input:checked").map(function (input) { return input.value; });
+    var classes = $$("#access-classes input:checked").map(function (input) { return input.value; });
+    if (classes.indexOf("read") === -1) classes.push("read");
+    var name = $("#access-name").value.trim();
+    var ttl = parseInt($("#access-ttl").value, 10);
+    var problems = [];
+    if (!name || name.length < 3) problems.push({ fieldId: "access-name", message: "Enter a session name." });
+    if (!connections.length) problems.push({ fieldId: "access-connections", message: "Select at least one connection." });
+    if (!scopes.length) problems.push({ fieldId: "access-scopes", message: "Select at least one scope." });
+    if (!isFinite(ttl) || ttl < 5) problems.push({ fieldId: "access-ttl", message: "Enter a lifetime of at least 5 minutes." });
+    if (problems.length) {
+      problems.forEach(function (problem) {
+        var node = $("#" + problem.fieldId + "-error");
+        if (node) node.textContent = problem.message;
+      });
+      toast("The session was not created.", "danger");
+      return;
+    }
+    var body = {
+      name: name,
+      scopes: scopes,
+      connection_ids: connections,
+      operation_classes: classes,
+      ttl_seconds: ttl * 60,
+      revoke_previous: $("#access-revoke-previous").checked,
+    };
+    await withBusy($("#access-generate"), function () {
+      return guarded(async function () {
+        var result = await api("agent-access/sessions", { method: "POST", body: body });
+        await loadRoute("access");
+        showHandoff(result);
+      });
+    }).catch(function (error) {
+      toast(errorText(error), "danger");
+    });
+  }
+
+  function showHandoff(result) {
+    var handoff = result.handoff || {};
+    var session = result.session || {};
+    var url = handoff.url || "";
+    var configured = /^https?:\/\//i.test(url);
+    openModal({
+      title: "Agent access link",
+      body: '<div class="notice" data-tone="info">' + icon("key", 18) +
+        "<div><strong>One-time handoff link</strong>It contains a single-use code, not the token. Open it in the agent's browser; the agent page shows the token once and confirms the session scope.</div></div>" +
+        '<p class="field-hint">Session <strong>' + esc(session.name || "") + "</strong> · expires " + esc(fmtDate(session.expires_at)) + "</p>" +
+        '<div class="token-box" id="handoff-value">' + esc(url || "no base URL configured") + "</div>" +
+        (!configured ? '<p class="field-error">Make the handoff link absolute by setting the agent API base URL in Agent access settings. A relative link only works on the agent listener.</p>' : "") +
+        '<div class="button-row mt-2">' +
+        '<button type="button" class="button" data-size="sm" id="handoff-copy">' + icon("copy", 14) + "<span>Copy link</span></button>" +
+        (configured ? '<a class="button" data-size="sm" href="' + esc(url) + '" target="_blank" rel="noreferrer noopener" id="handoff-open">Open agent page</a>' : "") +
+        "</div>" +
+        '<p class="field-hint mt-2">The link expires at ' + esc(fmtDate(handoff.expires_at)) + " and can be redeemed once. If it expires unused, generate a new session.</p>",
+      actions: [{ label: "Done", variant: "primary", onClick: closeModal }],
+      onMount: function () {
+        var button = $("#handoff-copy");
+        if (button) button.addEventListener("click", async function () {
+          try { await navigator.clipboard.writeText(url); toast("Handoff link copied."); }
+          catch { toast("Clipboard access was denied. Select the link and copy it manually.", "danger"); }
+        });
+      },
+    });
+  }
+
+  async function revokeAgentSession(sessionId) {
+    var ok = await confirmAction({
+      title: "Revoke temporary session",
+      message: "The agent token stops working immediately. The agent must request a new handoff link. Upstream credentials are not changed.",
+      confirmLabel: "Revoke session",
+      variant: "danger",
+      dangerZone: true,
+    });
+    if (!ok) return;
+    await guarded(function () { return api("agent-access/sessions/" + sessionId + "/revoke", { method: "POST", body: { reason: "revoked in management panel" } }); });
+    toast("Session revoked.");
+    await loadRoute("access");
+  }
+
+  async function revokeAllSessions() {
+    var ok = await confirmAction({
+      title: "Revoke every temporary session",
+      message: "All handoff links and session tokens stop working immediately. Administrator-managed agent identities are unaffected.",
+      confirmLabel: "Revoke all",
+      variant: "danger",
+      requireText: "REVOKE ALL",
+      dangerZone: true,
+    });
+    if (!ok) return;
+    var result = await guarded(function () {
+      return api("agent-access/revoke-all", { method: "POST", body: { confirm: "REVOKE ALL", reason: "revoked in management panel" } });
+    });
+    toast("Revoked " + (result ? result.revoked : 0) + " session(s).");
+    await loadRoute("access");
+  }
+
+  async function openSessionActivity(sessionId) {
+    var data = await guarded(function () { return api("agent-access/sessions/" + sessionId + "/activity?limit=40"); });
+    if (!data) return;
+    var items = data.items || [];
+    openModal({
+      title: "Session activity",
+      body: items.length
+        ? '<div class="detail-list">' + items.map(function (item) {
+            return '<div class="detail-row"><dt>' + esc(fmtDate(item.ts)) + "</dt><dd><span class=\"mono\">" + esc(item.tool) +
+              "</span> · " + esc(item.decision) + " · " + esc(item.status) + (item.reason ? " · " + esc(item.reason) : "") + "</dd></div>";
+          }).join("") + "</div>"
+        : emptyState("No activity yet", "Requests made with this session will appear here.", "audit"),
+      actions: [{ label: "Close", variant: "primary", onClick: closeModal }],
+    });
+  }
+
+  async function saveAgentAccessSettings() {
+    var defaultMinutes = parseInt($("#access-default-ttl").value, 10);
+    var maxHours = parseInt($("#access-max-ttl").value, 10);
+    var baseUrl = $("#access-base-url").value.trim();
+    var body = {
+      default_ttl_seconds: defaultMinutes * 60,
+      max_ttl_seconds: maxHours * 3600,
+      revoke_on_restart: $("#access-restart-revoke").checked,
+      agent_api_base_url: baseUrl,
+    };
+    await withBusy($("#access-save-settings"), function () {
+      return guarded(async function () {
+        await api("agent-access/settings", { method: "PUT", body: body });
+        toast("Agent access settings saved.");
+        await loadRoute("access");
+      });
+    }).catch(function (error) {
+      toast(errorText(error), "danger");
+    });
   }
 
   /* -------------------------------------------------------------- updates */

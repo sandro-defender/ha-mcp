@@ -7,6 +7,13 @@ upstreams (respx/ASGI transport) are **not** live-integration verification.
 No Home Assistant OS/Supervisor, Docker daemon, Proxmox, or real SSH server
 was available in this environment.
 
+> **Superseded for 0.4.0.** The 0.3.1 change below fixed read access for
+> `/init` only; the same denial then surfaced for
+> `/package/admin/s6-overlay-*/libexec/preinit` and `stage0`. The complete root
+> cause and fix (read + execute for the whole S6 chain) are documented in
+> [`STARTUP_TROUBLESHOOTING.md`](STARTUP_TROUBLESHOOTING.md). The text below is
+> kept as the historical record of the 0.2.1/0.3.1 investigation.
+
 ## Startup failure (`/init`: Permission denied) — root cause
 
 `agent_gateway/config.yaml` sets `init: false` (correct: the HA base image

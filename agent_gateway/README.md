@@ -4,7 +4,7 @@ A Home Assistant OS add-on that lets AI agents read and (with explicit human
 approval) act on Home Assistant, Proxmox VE, and restricted SSH targets
 **without ever receiving the underlying credentials**.
 
-Version 0.3.1 · experimental · not security-audited.
+Version 0.4.0 · experimental · not security-audited.
 
 ## Install
 
@@ -52,8 +52,8 @@ Additional infrastructure-only environment variables (not secrets):
 ## Ports and data
 
 * `8099/tcp` — management UI and API, reachable only through Ingress.
-* `8098/tcp` — agent REST `/api/v1` and MCP `/mcp`; **not published** by
-  default (`ports: 8098/tcp: null`).
+* `8098/tcp` — agent REST `/api/v1`, MCP `/mcp`, and the temporary-session
+  handoff page `/agent`; **not published** by default (`ports: 8098/tcp: null`).
 * `/data` — encrypted vault, SQLite state, SSH known hosts, options.
 * `/ssl` — mounted read-only for optional TLS certificates.
 
@@ -69,6 +69,9 @@ Additional infrastructure-only environment variables (not secrets):
 * Arbitrary SSH commands are not available; only allowlisted service checks,
   allowlisted log reads, and administrator-defined argv templates.
 * Runs as an unprivileged user with a single-profile AppArmor policy.
+* Temporary agent sessions are short-lived, connection- and
+  operation-class-scoped, delivered through a single-use handoff code, and
+  revoked on restart by default. See [`docs/AGENT_ACCESS.md`](../docs/AGENT_ACCESS.md).
 
 A fully compromised Home Assistant host can inspect runtime credentials. Read
 [`docs/SECURITY.md`](../docs/SECURITY.md) before enabling write access.

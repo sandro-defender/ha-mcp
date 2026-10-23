@@ -4,16 +4,17 @@
 > each session. `P0` blocks a production claim; lower numbers = do sooner.
 > Verification levels per `AGENTS.md` §4.
 
-## P0 — verify 0.3.1 on real Home Assistant OS (blocked: needs user's HA OS)
+## P0 — verify 0.4.0 on real Home Assistant OS (blocked: needs user's HA OS)
 
-- **Task:** Install/update the add-on to 0.3.1 from this repository on the
-  real HA OS host; confirm startup under the Supervisor (AppArmor `/init rix`
-  fix + 0.3.0 code), open the panel via Ingress, and confirm the existing
-  `/data` migrates v2 → v3 in place.
+- **Task:** Install/update the add-on to 0.4.0 from this repository on the
+  real HA OS host; confirm startup under the Supervisor (AppArmor read+execute
+  fix for the whole S6 chain), open the panel via Ingress, confirm the existing
+  `/data` migrates v2/v3 → v4 in place, and exercise one Agent Access session
+  (issue → `/agent` redeem → one read tool → revoke).
 - **Depends on:** user authorization + access to the HA OS host. Do **not**
   deploy without explicit approval.
 - **Acceptance criteria:**
-  - Add-on starts; `/healthz` ok; add-on log shows schema migration to v3
+  - Add-on starts; `/healthz` ok; add-on log shows schema migration to v4
     with agents/connections/credentials intact.
   - Panel → **Project Journal** renders (empty state on first run is
     correct); edit project state; create a task; all persist across an
@@ -38,7 +39,7 @@
 
 ## P1 — browser and accessibility pass on the real panel
 
-- **Task:** Manual pass of all 11 sections in a real browser inside HA
+- **Task:** Manual pass of all 12 sections (including Agent Access) in a real browser inside HA
   Ingress (desktop + mobile widths), keyboard-only navigation, one
   screen-reader spot check of the Journal timeline/handoff flow.
 - **Depends on:** P0.

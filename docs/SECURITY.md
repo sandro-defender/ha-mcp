@@ -87,12 +87,49 @@ and REST operations both go through `OperationService.execute`
    `/data` ownership and immediately drops to uid 1000.
 9. **No security audit, no penetration test, no fuzzing.** Treat this as
    experimental software.
-10. **Journal evidence is self-reported.** Verification levels record who
+10. **The handoff page is reachable before authentication.** Anyone who can
+    reach `:8098/agent` can load the page; it only reveals data after a valid
+    single-use code is redeemed. The redeem endpoint is same-origin-only,
+    JSON-only, rate-limited, and cannot be brute-forced (256-bit code).
+11. **External reachability is not verifiable from inside the add-on.** The
+    panel can probe its own loopback listener, but NAT, DNS, and firewall rules
+    between the agent host and `:8098` must be validated by the administrator.
+12. **Journal evidence is self-reported.** Verification levels record who
     claimed what, when, with which command/exit/output; the gateway does
     not run the tests. Any agent with `journal:read` can read the whole
     project journal (required for handoffs) — grant journal scopes only
     to agents allowed to see project history, and cross-check claims
     against git/CI. Redaction of pasted secrets is pattern-based.
+
+## Temporary agent access (0.4.0)
+
+The Agent Access broker adds a second, independent credential layer without
+changing the upstream model:
+
+* **Layer A** — upstream tokens/keys stay in the vault. Session lifecycle
+  operations never read, rotate, delete, or re-display them.
+* **Layer B** — a temporary session gets a 256-bit `hag_…` token whose SHA-256
+  digest is stored in the existing `agents` table (`kind='temporary'`). The
+  plaintext exists only in one HTTP response.
+* Sessions are created by an authenticated administrator (Ingress peer
+  allowlist + verified `X-Remote-User-Id` + CSRF header). A single-use handoff
+  code (hashed, 15-minute TTL, 256-bit) lets the agent collect the token on
+  `GET /agent`; the code travels in the URL fragment and is never sent to the
+  server, while the token never appears in a URL, log, referrer, or history.
+* A session is narrower than a persistent agent: explicit connection
+  allowlist, read/write operation classes only (destructive is rejected), and
+  a server-generated policy that only allows the tools those settings need.
+  Writes still require a human approval bound to the exact request.
+* Revocation is immediate and idempotent. With `agent_sessions_revoke_on_restart`
+  (default on), startup revokes every temporary session, expires pending
+  approvals, purges handoff codes, and increments a persisted epoch; a stale
+  token cannot be resurrected.
+* The unauthenticated page can display nothing until a valid code is redeemed;
+  it uses no cookies or browser storage and returns `no-store` with
+  `frame-ancestors 'none'` and `no-referrer`.
+
+See [`AGENT_ACCESS.md`](AGENT_ACCESS.md) for the endpoint inventory, threat
+model table, SSH restrictions, recovery steps, and verification status.
 
 ## Reporting
 

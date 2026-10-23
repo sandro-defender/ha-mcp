@@ -22,7 +22,7 @@ from starlette.applications import Starlette
 from gateway.api.apps import build_admin_app, build_agent_app
 from gateway.runtime import Runtime
 from gateway.settings import Settings
-from gateway.storage.db import Database
+from gateway.storage.db import SCHEMA_VERSION, Database
 
 JOURNAL_POLICY: dict[str, Any] = {
     "version": 1,
@@ -57,7 +57,7 @@ async def post_entry(client: httpx.AsyncClient, token: str, **overrides: Any) ->
 
 
 def test_schema_v3_creates_journal_tables(runtime: Runtime) -> None:
-    assert runtime.db.schema_info()["version"] == 3
+    assert runtime.db.schema_info()["version"] == SCHEMA_VERSION
     rows = runtime.db.query_all("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'journal_%'")
     names = {str(row["name"]) for row in rows}
     assert {
@@ -73,7 +73,7 @@ def test_schema_v3_creates_journal_tables(runtime: Runtime) -> None:
     } <= names
 
 
-def test_v2_database_upgrades_to_v3_preserving_records(tmp_path: Path) -> None:
+def test_v2_database_upgrades_to_current_schema_preserving_records(tmp_path: Path) -> None:
     """Simulate a pre-journal install: v2 meta, no journal tables, one agent."""
 
     path = tmp_path / "gateway.db"
@@ -103,8 +103,10 @@ def test_v2_database_upgrades_to_v3_preserving_records(tmp_path: Path) -> None:
     upgraded = Database(path)
     try:
         info = upgraded.schema_info()
-        assert info["version"] == 3
+        assert info["version"] == SCHEMA_VERSION
         assert info["migrated_from"] == 2
+        legacy = upgraded.query_one("SELECT kind, operation_classes FROM agents WHERE name='legacy-agent'")
+        assert legacy is not None and legacy["kind"] == "persistent"
         agent = upgraded.query_one("SELECT name FROM agents WHERE name='legacy-agent'")
         assert agent is not None
         tables = upgraded.query_all(

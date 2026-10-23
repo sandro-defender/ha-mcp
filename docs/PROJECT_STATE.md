@@ -5,11 +5,11 @@
 > `docs/WORKLOG.md`. Prioritized remaining work: `docs/NEXT_STEPS.md`.
 > Runtime records: the gateway Project Journal (`docs/JOURNAL.md`).
 
-- **Last updated:** 2026-10-22 by Arena coding agent (session
-  `arena/100263ca-ha-mcp`)
-- **Branch:** `arena/100263ca-ha-mcp` · working tree has the 0.3.1 AppArmor
-  startup follow-up; not yet released.
-- **Version:** 0.3.1 (synced across config/pyproject/Dockerfile/`__init__`/
+- **Last updated:** 2026-10-23 by Arena coding agent (session
+  `arena/09933ac1-ha-mcp`, PR #7)
+- **Branch:** `arena/09933ac1-ha-mcp` · 0.4.0 changes committed (`87c4b6d`)
+  and pushed; Docker build and HA OS verification still pending.
+- **Version:** 0.4.0 (synced across config/pyproject/Dockerfile/`__init__`/
   both CHANGELOGs; not yet released)
 
 ## Purpose and architecture
@@ -24,8 +24,11 @@ management `:8099`, agent REST+MCP `:8098`) sharing one `Runtime`,
 (schema v3 `journal_*` tables, `gateway/journal/`, REST + MCP `journal.*`
 tools via the central policy engine, 11th panel section) so agents can
 persist sessions/tasks/decisions/issues/test evidence and generate
-next-session handoff prompts. Full detail: `README.md`, `docs/JOURNAL.md`,
-`docs/SECURITY.md`.
+next-session handoff prompts. 0.4.0 adds the temporary agent access broker
+(schema v4 `session_handoffs`, `/agent` handoff page, 12th panel section,
+restart revocation) and the S6 AppArmor startup fix; see
+`docs/AGENT_ACCESS.md` and `docs/STARTUP_TROUBLESHOOTING.md`. Full detail:
+`README.md`, `docs/JOURNAL.md`, `docs/SECURITY.md`.
 
 ## Completed and verified (this branch)
 
@@ -50,19 +53,23 @@ Exact commands and environment: see `docs/WORKLOG.md` (2026-10-22 entry).
 
 - **Live deployment verification — blocked (infrastructure).** No Home
   Assistant OS/Supervisor, Proxmox, SSH lab, or Docker daemon exists in the
-  agent sandbox. The 0.3.1 AppArmor `/init rix` follow-up and the 0.3.0
-  schema-v3 migration are verified by source-level checks only, **not** on a
-  real install. Must be confirmed on the user's HA OS before making
-  production-readiness claims.
-- Nothing else is half-finished on this branch; the journal feature is
-  complete against its acceptance criteria (see PR).
+  agent sandbox. The 0.4.0 S6 AppArmor read+execute fix, the schema-v3→v4
+  migration and the agent access broker are verified by source-level checks,
+  automated tests and a process-level smoke run only — **not** on a real
+  install. Must be confirmed on the user's HA OS before making
+  production-readiness claims (`docs/STARTUP_TROUBLESHOOTING.md`,
+  `docs/AGENT_ACCESS.md`).
+- Nothing else is half-finished on this branch; 0.4.0 is committed and the PR
+  is open.
 
 ## Known bugs and unresolved security issues
 
 - No journal-specific bugs found by the test suite. Known systemic items
   (pre-existing, unchanged): no third-party security audit/pen test/fuzzing;
-  no live HA/Proxmox/SSH integration tests; no container-run CI smoke
-  (CI builds the amd64 image only); HA WebSocket intentionally absent.
+  no live HA/Proxmox/SSH integration tests; the container startup smoke
+  (`tools/startup-smoke/docker-smoke.sh`) runs in CI's `image` job but has not
+  been executed in this sandbox (no Docker daemon); HA WebSocket intentionally
+  absent.
 - Journal limitations (documented in `docs/JOURNAL.md`): verification levels
   are self-reported (gateway records claims + metadata; it does not run the
   tests); any `journal:read` agent sees the whole project journal; redaction
@@ -114,6 +121,6 @@ therefore `automated_tests`, never `integration_verified`.
 ## Next tasks
 
 See `docs/NEXT_STEPS.md` (prioritized, with dependencies and acceptance
-criteria). Highest priority: install 0.3.1 on real HA OS, verify the
-`/init rix` startup fix, and confirm the v2→v3 migration + panel on the
-existing `/data`.
+criteria). Highest priority: install 0.4.0 on real HA OS, verify the S6
+read+execute startup fix, confirm the v3→v4 migration on the existing `/data`,
+and exercise one Agent Access session end to end.
