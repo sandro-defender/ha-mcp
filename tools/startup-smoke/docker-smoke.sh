@@ -216,8 +216,9 @@ STEP="shutdown"
 # to SIGTERM at all, and whether S6 forwards it, before blaming either side.
 if [ "${SMOKE_DIAG_SIGNALS:-0}" = "1" ]; then
   log "DIAG: process table"
-  docker exec "$CONTAINER" ps 2>&1 || true
-  PY_PID="$(docker exec "$CONTAINER" ps -o pid,args 2>/dev/null | grep -- '-m gateway' | grep -v -- 'grep' | awk '{print $1}' | head -1)"
+  PS_OUT="$(docker exec "$CONTAINER" ps 2>&1 || true)"
+  printf '%s\n' "$PS_OUT"
+  PY_PID="$(printf '%s\n' "$PS_OUT" | grep -- '-m gateway' | grep -v -- 'grep' | awk '{print $1}' | head -1 || true)"
   echo "python pid inside container: ${PY_PID:-not found}"
   if [ -n "$PY_PID" ]; then
     docker exec "$CONTAINER" kill -TERM "$PY_PID" || true
