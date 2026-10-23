@@ -215,23 +215,24 @@ STEP="shutdown"
 # Temporary diagnostic (SMOKE_DIAG_SIGNALS=1): determine whether the app reacts
 # to SIGTERM at all, and whether S6 forwards it, before blaming either side.
 if [ "${SMOKE_DIAG_SIGNALS:-0}" = "1" ]; then
-  log "DIAG: process table"
+  DIAG=""
   PS_OUT="$(docker exec "$CONTAINER" ps 2>&1 || true)"
-  printf '%s\n' "$PS_OUT"
+  DIAG+="--- ps ---"$'\n'"$PS_OUT"$'\n'
   PY_PID="$(printf '%s\n' "$PS_OUT" | grep -- '-m gateway' | grep -v -- 'grep' | awk '{print $1}' | head -1 || true)"
-  echo "python pid inside container: ${PY_PID:-not found}"
+  DIAG+="python pid: ${PY_PID:-not found}"$'\n'
   if [ -n "$PY_PID" ]; then
-    docker exec "$CONTAINER" kill -TERM "$PY_PID" || true
+    docker exec "$CONTAINER" kill -TERM "$PY_PID" >/dev/null 2>&1 || DIAG+="kill -TERM failed"$'\n'
     for i in $(seq 1 12); do
       sleep 1
-      st="$(docker inspect -f '{{.State.Running}}' "$CONTAINER")"
-      echo "after direct TERM to python ${i}s: running=$st"
+      st="$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null || echo unknown)"
+      DIAG+="t+${i}s running=$st"$'\n'
       [ "$st" = "true" ] || break
     done
-    echo "--- logs around the direct signal ---"
-    docker logs "$CONTAINER" 2>&1 | tail -25 || true
   fi
-  annotate warning "Startup smoke: signal diagnostic" "$(docker logs "$CONTAINER" 2>&1 | tail -25)"
+  DIAG+="--- app log (last 15) ---"$'\n'"$(docker logs "$CONTAINER" 2>&1 | tail -15 || true)"$'\n'
+  DIAG+="--- shutdown markers ---"$'\n'"$(docker logs "$CONTAINER" 2>&1 | grep -iE 'shutting down|shutdown requested|signal|terminated|Force' | tail -10 || true)"
+  printf '%s\n' "$DIAG"
+  annotate warning "Startup smoke: direct SIGTERM to python" "$DIAG"
   cleanup
   echo "RESULT: DIAG (not a pass/fail)"
   exit 0
