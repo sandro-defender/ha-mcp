@@ -39,7 +39,7 @@ log() { printf '\n== %s\n' "$*"; }
 # the line is just printed.
 annotate() {
   local level="$1" title="$2" message="$3"
-  message="$(printf '%s' "$message" | tr -d '\r' | head -c 6000)"
+  message="$(printf '%s' "$message" | tr -d '\r' | head -c 12000)"
   printf '::%s title=%s::%s\n' "$level" "$title" "${message//$'\n'/%0A}"
 }
 
@@ -117,6 +117,7 @@ fi
 log "Start container ($AA_MODE)"
 cleanup
 if ! docker run -d --name "$CONTAINER" \
+  -e S6_VERBOSITY=2 \
   "${SECURITY_OPT[@]}" \
   -p "127.0.0.1:${INGRESS_PORT}:8099" \
   -p "127.0.0.1:${AGENT_PORT}:8098" \
@@ -216,10 +217,11 @@ STEP="shutdown"
 SNAP=/tmp/hag-stop-snapshots.txt
 : > "$SNAP"
 (
-  for _ in $(seq 1 15); do
+  for _ in $(seq 1 12); do
     {
       printf -- '--- %s ---\n' "$(date -u +%H:%M:%S)"
-      docker top "$CONTAINER" -eo pid,uid,args 2>&1 || true
+      docker inspect -f 'state={{.State.Status}} pid={{.State.Pid}} exit={{.State.ExitCode}}' "$CONTAINER" 2>&1 || true
+      docker top "$CONTAINER" 2>&1 || true
     } >> "$SNAP" 2>&1
     sleep 2
   done
@@ -233,8 +235,10 @@ EXIT_CODE="$(docker inspect -f '{{.State.ExitCode}}' "$CONTAINER")"
 docker logs "$CONTAINER" 2>&1 | tail -20 || true
 if [ "$EXIT_CODE" != "0" ]; then
   DETAILS="exit=$EXIT_CODE after docker stop --time 20 (137 = SIGKILL)."$'\n'
-  DETAILS+="--- process snapshots during stop ---"$'\n'"$(tail -30 "$SNAP")"$'\n'
-  DETAILS+="--- last application log lines ---"$'\n'"$(docker logs "$CONTAINER" 2>&1 | grep -iE 'shutdown|signal|exited|uvicorn|gateway' | tail -15 || true)"
+  DETAILS+="--- state ---"$'\n'"$(docker inspect -f '{{json .State}}' "$CONTAINER" 2>&1 || true)"$'\n'
+  DETAILS+="--- logs from the first 'stopping' line ---"$'\n'
+  DETAILS+="$(docker logs "$CONTAINER" 2>&1 | sed -n '/stopping/,$p' | head -50 || true)"$'\n'
+  DETAILS+="--- process snapshots during stop ---"$'\n'"$(tail -40 "$SNAP")"
   printf '%s\n' "$DETAILS" >&2
   annotate error "Startup smoke: shutdown did not complete" "$DETAILS"
   fail "container exit code ${EXIT_CODE} after SIGTERM (expected 0)"
