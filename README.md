@@ -24,13 +24,13 @@ A **Home Assistant OS add-on** that sits between external AI coding agents (Clau
 - **Credentials stay in an AES-256-GCM + Argon2id vault** inside `/data`. They are never returned to agents, never appear in the UI after saving, and never enter logs or error messages.
 - **Deny-by-default policies, single-use approvals, and a redacted audit log** make every operation reviewable.
 
-Project status: **0.3.1 — startup permission follow-up; the full suite was not available in this session.** It has not been installed on a live Home Assistant OS system, has not been exercised against real Home Assistant/Proxmox/SSH targets in this environment, and has not been security-audited. See [Verification log](#verification-log) and [`docs/SECURITY.md`](docs/SECURITY.md).
+Project status: **0.4.0 — S6 startup fix + temporary agent access broker.** The full suite, lint, type-check and the process-level startup harness pass in this environment. The add-on has **not** been built or booted on Home Assistant OS here, AppArmor was not enforced by a kernel here, and no live Home Assistant/Proxmox/SSH target was contacted. See [Verification log](#verification-log), [`docs/STARTUP_TROUBLESHOOTING.md`](docs/STARTUP_TROUBLESHOOTING.md), [`docs/AGENT_ACCESS.md`](docs/AGENT_ACCESS.md) and [`docs/SECURITY.md`](docs/SECURITY.md).
 
 ---
 
-## Operational workspace — 11 dedicated sections
+## Operational workspace — 12 dedicated sections
 
-The Ingress management panel (vanilla JS + CSS, no build step, strict CSP, offline, responsive) is organized into **11 sections**:
+The Ingress management panel (vanilla JS + CSS, no build step, strict CSP, offline, responsive) is organized into **12 sections**:
 
 | Section | What you do there |
 | :--- | :--- |
@@ -38,6 +38,7 @@ The Ingress management panel (vanilla JS + CSS, no build step, strict CSP, offli
 | **Connections** | Home Assistant / Proxmox VE / SSH profiles with latency, multi-step diagnostics, error classification & remediation, `last_ok_at`, SSH `known_hosts` enrollment |
 | **Credentials** | Encrypted vault lifecycle, 5 secret kinds, masked indicators, reference tracking, encrypted export/restore |
 | **Agents** | Per-agent identities, descriptions, scopes, tool allow/deny chips, token expiry status, rotation/revocation, usage counters |
+| **Agent Access** | Temporary sessions for coding agents: connections, scopes, operation classes, short lifetimes, single-use handoff links, expiry, revocation, restart policy, per-session activity |
 | **Tools** | 12-tool catalog, group toggles, risk/approval classification, JSON Schema inspector, MCP/REST parity |
 | **Permissions** | Visual allow/deny rule builder, starter templates, raw JSON policy editor, **interactive Policy Simulator** (`POST /api/admin/policies/evaluate`) |
 | **Approvals** | Single-use, expiring, parameter-bound approvals with SHA-256 binding and policy re-validation |
@@ -237,10 +238,11 @@ CI: `lint + type-check + test` → `static UI checks` → `amd64 image build`. R
 | Check | Result |
 | :--- | :--- |
 | `ruff check` / `ruff format --check` / `mypy --strict` | pass |
-| `pytest -q` | **253 passed** (incl. AppArmor/`/init` startup regression, concurrent-approval, expired-token, and 42 Project Journal tests: persistence, task transitions/dependencies, idempotency, redaction, cross-agent authorization, handoff generation, MCP parity) |
-| Journal socket E2E (dev instance on `:18098/:18099`) | pass — agent session/tasks/test-run/handoff over real HTTP, process restart, records and handoff re-read from `/tmp` data dir; jsdom panel smoke (`tools/ui-smoke`) incl. journal checks pass |
-| `node --check app.js` + `grep` for inline scripts / remote assets | pass |
-| Add-on image build (CI, `linux/amd64`) | pass in CI; not runnable in this sandbox (no Docker daemon) — the 0.2.1 `/init` AppArmor fix is covered by packaging regression tests pending live HA OS confirmation |
+| `pytest -q` | **319 passed** (incl. 33 temporary-access broker tests, the static S6/AppArmor startup contract, concurrent handoff redemption, restart revocation, epoch rejection, and the Project Journal suite) |
+| `tools/startup-smoke/smoke.py` (real `run.sh`, both listeners, Ingress gate, SIGTERM, restart) | pass — 2 cycles, health/readiness, clean exit 0 |
+| jsdom panel smoke (`tools/ui-smoke`: panel, paths, Agent Access, agent handoff page) | pass — no runtime errors; session issue/revoke and handoff rendering exercised against stubbed API payloads |
+| `node --check app.js` / `agent.js` + `grep` for inline scripts / remote assets / browser storage | pass |
+| Add-on image build + container boot (CI, `linux/amd64`) | **not run here** (no Docker daemon, no registry access). Defined in `.github/workflows/ci.yml` (`image` job + `tools/startup-smoke/docker-smoke.sh`); when the runner has AppArmor the real profile is loaded and enforced |
 | Live HA OS deployment / real HA/Proxmox/SSH targets / MCP client E2E | **not run** (no lab in this environment) |
 | Third-party security audit | **not performed** |
 

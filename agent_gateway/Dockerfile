@@ -2,7 +2,7 @@ ARG BUILD_FROM=ghcr.io/home-assistant/base:3.24
 FROM ${BUILD_FROM}
 
 ARG BUILD_ARCH
-ARG BUILD_VERSION=0.3.1
+ARG BUILD_VERSION=0.4.0
 
 LABEL \
   io.hass.name="Home Assistant Agent Gateway" \
@@ -37,6 +37,23 @@ RUN apk del .build-deps \
 
 COPY run.sh /run.sh
 RUN chmod 0755 /run.sh
+
+# Startup contract.  Fail the build (instead of the user's container) if the
+# S6-Overlay entrypoint chain is missing, or lost the read/execute bits that
+# the kernel + /bin/sh need for `#!/bin/sh` scripts.  A non-readable script is
+# what produces:
+#   /bin/sh: can't open '/init': Permission denied
+#   s6-overlay-suexec: fatal: child failed with exit code 2
+# The AppArmor profile in apparmor.txt grants the matching rix rules; neither
+# this check nor the profile chmods or replaces /init.
+RUN set -eu; \
+    test -x /init && test -r /init; \
+    preinit="$(ls -d /package/admin/s6-overlay-*/libexec/preinit)"; \
+    test -x "$preinit" && test -r "$preinit"; \
+    stage0="$(dirname "$preinit")/stage0"; \
+    test -x "$stage0" && test -r "$stage0"; \
+    su-exec app:app /opt/venv/bin/python -c \
+        "import argon2, asyncssh, cryptography, fastapi, gateway, uvicorn; print('gateway imports ok')"
 
 # The entrypoint starts as root only to fix ownership of the Supervisor-mounted
 # /data volume, then immediately drops to the unprivileged app user.

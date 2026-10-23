@@ -6,6 +6,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-23
+
+### Fixed
+- **S6-Overlay startup failure (`/bin/sh: can't open …: Permission denied`).** The custom AppArmor profile replaced the Supervisor default but granted only execute (`ix`) to the S6 scripts, and in 0.2.1 nothing at all. Every file in the chain — `/init`, `/package/admin/s6-overlay-*/libexec/preinit`, `stage0`, and `/run/s6/basedir/bin/init` — is a `#!/bin/sh` script, so the kernel starts `/bin/sh <script>` and the interpreter must **read** the file. Execute-only rules therefore produce the reported `can't open` error, and `s6-overlay-suexec: fatal: child failed with exit code 2` is that shell exit status surfacing one stage later. The profile now grants `rix` to `/init`, `/package/**`, `/command/**`, `/etc/s6-overlay/**`, the cont-init/services trees, and the generated runtime tree, with `mrix`/`mr` for the Alpine busybox symlinks, the virtualenv, and shared libraries, and `k` (locking) on the SQLite directories. No file modes, ownership, entrypoint, or base image were changed; AppArmor stays enabled. Evidence chain, per-rule justification, verification steps, and the remaining unverified items are in [`docs/STARTUP_TROUBLESHOOTING.md`](docs/STARTUP_TROUBLESHOOTING.md).
+- **Startup failures now fail the build instead of the user's container.** The Dockerfile asserts that `/init`, `preinit`, and `stage0` are readable and executable and that the venv imports the gateway as the unprivileged `app` user.
+
+### Added
+- **Temporary agent access broker (two credential layers).** Layer A upstream credentials remain encrypted in the vault and are never returned to agents. Layer B is a 256-bit `hag_…` session token whose SHA-256 digest is stored in the existing `agents` table (`kind='temporary'`); the plaintext is returned exactly once. Tokens are not derived from upstream credentials and never appear in URLs, query strings, logs, audit rows, or browser storage.
+- **Single-use handoff page (`/agent`).** An authenticated administrator generates a session and receives a link whose URL **fragment** carries a hashed, 256-bit, single-use code (15-minute TTL) — never the token. The page strips the fragment before POSTing to `/agent/api/redeem`, then shows the token once together with the verified REST base (`/api/v1`), MCP endpoint (`/mcp`), expiry, remaining lifetime, scopes, operation classes, and connection names. Responses are `no-store`, `no-referrer`, and CSP `default-src 'none'; frame-ancestors 'none'`; no cookies or browser storage are used, and `/agent/api/session` still requires the bearer token.
+- **Scoped sessions.** Each session carries an explicit connection allowlist and read/write operation classes (`destructive` cannot be granted). A server-generated policy document allows only the tools those settings need; write rules require human approval and are rate-limited. The operation pipeline re-checks the class, connection, scope, expiry, revocation, and restart epoch on every request, for REST and MCP alike. The scope/class/connection checks fail closed and are tested to be independent of client input.
+- **Agent Access panel section (12th).** Generate, inspect, and revoke sessions; see status, remaining lifetime, connections, effective permissions, token prefix, last use, and per-session activity; configure default/maximum lifetime, the agent base URL, restart revocation, and re-probe the listener. Revoke-all requires typing `REVOKE ALL`.
+- **Persisted restart policy and session epoch** (`settings.session_epoch`, `agent_sessions_revoke_on_restart` default on). Startup revokes every temporary session, expires its pending approvals, purges handoff codes, and bumps the epoch, so a stale token cannot be resurrected and no upstream credential is rotated, deleted, or re-displayed. Persistent administrator-managed identities are unaffected.
+- **Schema v4** with an in-place migration: `agents` gains `kind`, `allowed_connections`, `operation_classes`, `revoked_at`, `revoked_reason`, `created_by`, `session_epoch`, `issued_ttl_seconds`; new `session_handoffs` table stores only SHA-256 code digests. Pre-existing agent rows default to `kind='persistent'` with unrestricted connection access, preserving previous behaviour under policy + approvals.
+
+### Changed
+- Management panel is now 12 sections; the panel navigation includes **Agent Access**.
+- `pyproject.toml` test extra includes `PyYAML` for the startup contract tests. The agent handoff assets are packaged with the wheel.
+
+### Security
+- Session creation, revocation, revoke-all, settings changes, and handoff redemption are audited with identifiers and scope metadata — never tokens, codes, or upstream secrets.
+- Handoff redemption is same-origin-only, JSON-only, rate-limited (20/min per peer), atomic under concurrency, and single-use; concurrent redemption of one code succeeds exactly once.
+- The admin page never receives a session token; the agent page never receives an upstream credential. Tests assert that sentinel upstream secrets do not appear in issuance, redemption, or overview responses and that tokens are only stored as digests.
+
+### Known limitations
+- **Not verified here:** Docker image build/boot, real AppArmor enforcement, Home Assistant OS/Supervisor installation, live Home Assistant/Proxmox/SSH calls, and a real browser session against `/agent` (no Docker daemon, no registry access, no AppArmor, no browser in this environment). The startup diagnosis is statically inferred from the pinned S6/Supervisor sources and the exact error strings; the fix is a defensive superset of the documented HA example. See `docs/STARTUP_TROUBLESHOOTING.md`.
+- External reachability of `:8098` cannot be probed from inside the add-on; NAT/DNS/firewall must be validated by the administrator.
+- SSH remains gateway-executed through fixed `argv` templates under gateway-held credentials; genuinely ephemeral SSH credentials (short-lived certificates, ephemeral accounts) are not implemented, and the gateway does not create accounts, edit `sshd_config`, enable root login, or install keys.
+
+
+
 ## [0.3.1] - 2026-10-22
 
 ### Fixed

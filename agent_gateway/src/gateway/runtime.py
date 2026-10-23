@@ -11,6 +11,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from .agent_access import AgentAccessService
 from .approvals.service import ApprovalService
 from .audit.service import AuditService
 from .auth.agents import AgentService
@@ -214,6 +215,18 @@ class Runtime:
             audit=self.audit,
             rate_limiter=self.rate_limiter,
         )
+        self.agent_access = AgentAccessService(
+            db=self.db,
+            settings_store=self.settings_store,
+            agents=self.agents,
+            policies=self.policies,
+            connections=self.connections,
+            approvals=self.approvals,
+            audit=self.audit,
+            tools=self.tools,
+            settings=settings,
+        )
+        self.startup_session_policy: dict[str, Any] | None = None
         self._initialized = False
 
     # ------------------------------------------------------------- lifecycle
@@ -236,6 +249,11 @@ class Runtime:
 
         if self.settings_store.get_bool("auto_unlock") and not self.vault.unlock_with_key_file():
             logger.warning("auto-unlock is enabled but the vault could not be unlocked; unlock it manually")
+        # Apply the configured restart policy before any listener accepts
+        # requests.  This only revokes gateway-issued temporary sessions; the
+        # encrypted upstream credentials are never touched.
+        self.startup_session_policy = self.agent_access.apply_startup_policy()
+
         if not self.vault.exists:
             logger.info("credential vault is not initialized")
         elif not self.vault.unlocked:
@@ -644,6 +662,16 @@ class Runtime:
             },
             "tool_groups": self.tools.groups(),
             "settings": self.settings_store.all_public(),
+            "agent_access": {
+                "active_sessions": sum(
+                    1
+                    for session in self.agent_access.list_sessions()
+                    if session["status"] in {"active", "expiring_soon"}
+                ),
+                "revoke_on_restart": self.agent_access.revoke_on_restart(),
+                "agent_api_base_url_set": bool(self.agent_access.base_url()),
+                "last_restart_policy": self.startup_session_policy,
+            },
             "recent_audit": recent,
             "warnings": warnings,
             "release": {

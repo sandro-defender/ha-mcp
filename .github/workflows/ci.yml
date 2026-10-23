@@ -44,7 +44,9 @@ jobs:
         with:
           node-version: "22"
       - name: JavaScript syntax
-        run: node --check agent_gateway/src/gateway/ui/static/app.js
+        run: |
+          node --check agent_gateway/src/gateway/ui/static/app.js
+          node --check agent_gateway/src/gateway/ui/agent/agent.js
       - name: No inline scripts or remote assets
         run: |
           set -euo pipefail
@@ -53,6 +55,15 @@ jobs:
           fi
           if grep -nE 'https?://' agent_gateway/src/gateway/ui/static/index.html; then
             echo "remote asset reference found"; exit 1
+          fi
+      - name: Agent handoff page is offline and storage-free
+        run: |
+          set -euo pipefail
+          PAGE=agent_gateway/src/gateway/ui/agent/index.html
+          if grep -nE '<script[^>]*>[^<]' "$PAGE"; then echo "inline script found"; exit 1; fi
+          if grep -nE '(src|href)="(https?:)?//' "$PAGE"; then echo "remote asset found"; exit 1; fi
+          if grep -nE 'localStorage\.|sessionStorage\.|indexedDB\.|document\.cookie' agent_gateway/src/gateway/ui/agent/agent.js; then
+            echo "browser storage found on the handoff page"; exit 1
           fi
       - name: No browser storage for secrets
         run: |
@@ -101,7 +112,18 @@ jobs:
           file: agent_gateway/Dockerfile
           platforms: linux/amd64
           push: false
+          load: true
           tags: ha-agent-gateway:ci
           build-args: |
             BUILD_ARCH=amd64
             BUILD_VERSION=${{ steps.version.outputs.value }}
+      # Starts the real image: S6-Overlay stage 2, /healthz, /readyz, the
+      # unprivileged app user, restart and graceful shutdown.  When the runner
+      # has AppArmor, agent_gateway/apparmor.txt is loaded and enforced — the
+      # same enforcement Home Assistant Supervisor applies.  See
+      # docs/STARTUP_TROUBLESHOOTING.md for what still needs a real HA OS host.
+      - name: Startup smoke test
+        env:
+          IMAGE: ha-agent-gateway:ci
+          SKIP_BUILD: "1"
+        run: bash tools/startup-smoke/docker-smoke.sh

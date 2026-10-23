@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -34,8 +34,33 @@ CREATE TABLE IF NOT EXISTS agents (
     expires_at TEXT,
     last_used_at TEXT,
     last_rotated_at TEXT,
-    notes TEXT NOT NULL DEFAULT ''
+    notes TEXT NOT NULL DEFAULT '',
+    -- Temporary agent-access sessions (schema v4).  Persistent identities keep
+    -- the historical behaviour: no connection restriction and every operation
+    -- class is still governed by policy + approvals.
+    kind TEXT NOT NULL DEFAULT 'persistent',
+    allowed_connections TEXT,
+    operation_classes TEXT NOT NULL DEFAULT '["read","write","destructive"]',
+    revoked_at TEXT,
+    revoked_reason TEXT NOT NULL DEFAULT '',
+    created_by TEXT NOT NULL DEFAULT '',
+    session_epoch INTEGER NOT NULL DEFAULT 0,
+    issued_ttl_seconds INTEGER
 );
+
+-- Single-use handoff codes that let an agent collect its session credential
+-- once, without ever putting the credential itself in a URL.  Only a SHA-256
+-- digest of the code is stored.
+CREATE TABLE IF NOT EXISTS session_handoffs (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    code_hash TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_handoffs_session ON session_handoffs(session_id);
 
 CREATE TABLE IF NOT EXISTS policies (
     agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
@@ -366,6 +391,7 @@ class Database:
         if row is None:
             self._ensure_v2_columns()
             self._ensure_v3_tables()
+            self._ensure_v4_columns()
             self._conn.execute(
                 "INSERT INTO schema_meta(key, value) VALUES('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
@@ -382,6 +408,7 @@ class Database:
         if current_version < SCHEMA_VERSION:
             self._ensure_v2_columns()
             self._ensure_v3_tables()
+            self._ensure_v4_columns()
             self._conn.execute(
                 "INSERT OR REPLACE INTO schema_meta(key, value) VALUES('migrated_from', ?)",
                 (str(current_version),),
@@ -397,6 +424,46 @@ class Database:
         else:
             self._ensure_v2_columns()
             self._ensure_v3_tables()
+            self._ensure_v4_columns()
+
+    def _ensure_v4_columns(self) -> None:
+        """Add the temporary-session columns without touching existing rows.
+
+        Existing rows keep working: `kind='persistent'`, no connection
+        restriction (`allowed_connections` NULL) and all operation classes,
+        which is exactly the pre-v4 behaviour governed by policy + approvals.
+        """
+
+        columns = {str(r["name"]) for r in self._conn.execute("PRAGMA table_info(agents)").fetchall()}
+        additions = {
+            "kind": "TEXT NOT NULL DEFAULT 'persistent'",
+            "allowed_connections": "TEXT",
+            "operation_classes": 'TEXT NOT NULL DEFAULT \'["read","write","destructive"]\'',
+            "revoked_at": "TEXT",
+            "revoked_reason": "TEXT NOT NULL DEFAULT ''",
+            "created_by": "TEXT NOT NULL DEFAULT ''",
+            "session_epoch": "INTEGER NOT NULL DEFAULT 0",
+            "issued_ttl_seconds": "INTEGER",
+        }
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_handoffs ("
+            "id TEXT PRIMARY KEY,"
+            "session_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,"
+            "code_hash TEXT NOT NULL UNIQUE,"
+            "created_at TEXT NOT NULL,"
+            "expires_at TEXT NOT NULL,"
+            "used_at TEXT)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_session_handoffs_session ON session_handoffs(session_id)"
+        )
+        for name, ddl in additions.items():
+            if name not in columns:
+                self._conn.execute(f"ALTER TABLE agents ADD COLUMN {name} {ddl}")
+        self._conn.execute(
+            "UPDATE agents SET operation_classes=? WHERE operation_classes IS NULL OR operation_classes=''",
+            ('["read","write","destructive"]',),
+        )
 
     def _ensure_v3_tables(self) -> None:
         """Verify the Project Journal tables exist (schema v3).
@@ -506,8 +573,17 @@ class SettingsStore:
         "max_operation_timeout_seconds": 120,
         "max_output_bytes": 262144,
         "ui_theme": "system",
+        # Temporary agent access (see gateway/agent_access.py).
+        "agent_access_default_ttl_seconds": 3600,
+        "agent_access_max_ttl_seconds": 86400,
+        "agent_sessions_revoke_on_restart": True,
+        "agent_api_base_url": "",
+        # Internal: invalidates every temporary session across restarts when
+        # the restart policy is enabled.  Never exposed through the API.
+        "session_epoch": 0,
     }
     ALLOWED_KEYS = frozenset(DEFAULTS)
+    PRIVATE_KEYS = frozenset({"session_epoch"})
 
     def __init__(self, db: Database) -> None:
         self.db = db
@@ -547,4 +623,4 @@ class SettingsStore:
         )
 
     def all_public(self) -> dict[str, Any]:
-        return {key: self.get(key) for key in sorted(self.ALLOWED_KEYS)}
+        return {key: self.get(key) for key in sorted(self.ALLOWED_KEYS - self.PRIVATE_KEYS)}

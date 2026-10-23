@@ -17,6 +17,8 @@ from ..mcp.server import MCPEndpoint
 from ..runtime import Runtime
 from .admin import router as admin_router
 from .agent import router as agent_router
+from .agent_access import router as agent_access_router
+from .agent_page import router as agent_page_router
 from .errors import register_exception_handlers
 from .journal import admin_router as journal_admin_router
 from .journal import agent_router as journal_agent_router
@@ -59,6 +61,7 @@ def build_admin_app(runtime: Runtime) -> FastAPI:
     app.add_middleware(AccessLogMiddleware)
     app.add_middleware(RequestContextMiddleware)
     app.include_router(admin_router)
+    app.include_router(agent_access_router)
     app.include_router(journal_admin_router)
 
     @app.get("/healthz", include_in_schema=False)
@@ -118,6 +121,7 @@ def build_agent_app(runtime: Runtime) -> FastAPI:
     app.add_middleware(BodyLimitMiddleware, max_bytes=runtime.settings.mcp_max_request_bytes)
     app.add_middleware(AccessLogMiddleware)
     app.add_middleware(RequestContextMiddleware)
+    app.include_router(agent_page_router)
     app.include_router(agent_router)
     app.include_router(journal_agent_router)
 

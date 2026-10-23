@@ -271,3 +271,93 @@ def test_journal_ui_contains_no_hardcoded_example_records() -> None:
     for fake in ("Lorem", "Example task", "Sample entry", "mock entry", "seeded"):
         assert fake not in view
     assert "items.map(journalTimelineItem)" in view
+
+
+# ------------------------------------------------------- temporary agent access
+
+AGENT_DIR = UI_DIR.parent / "agent"
+AGENT_HTML = (AGENT_DIR / "index.html").read_text(encoding="utf-8")
+AGENT_JS = (AGENT_DIR / "agent.js").read_text(encoding="utf-8")
+
+
+def _agent_access_view_source() -> str:
+    start = JS.index("/* ----------------------------------------------------------- agent access */")
+    end = JS.index("/* -------------------------------------------------------------- updates */")
+    return JS[start:end]
+
+
+def test_agent_access_section_is_wired_to_real_endpoints() -> None:
+    assert '["access", "Agent Access", "key"]' in JS
+    assert 'route === "access"' in JS
+    view = _agent_access_view_source()
+    assert 'api("agent-access")' in view
+    assert 'api("agent-access/sessions", { method: "POST"' in view
+    assert '"/revoke"' in view
+    assert 'api("agent-access/revoke-all"' in view
+    assert 'api("agent-access/settings", { method: "PUT"' in view
+    assert '"/activity?limit=40"' in view
+    assert 'api("agent-access/reachability"' in view
+
+
+def test_agent_access_ui_shows_lifetime_status_and_revocation_controls() -> None:
+    view = _agent_access_view_source()
+    for fragment in (
+        "remaining ",
+        "expires ",
+        "handoff",
+        "Revoke all sessions",
+        "REVOKE ALL",
+        "revoke_on_restart",
+        "handoff_pending",
+        "operation_classes",
+    ):
+        assert fragment in view
+    assert "confirmAction(" in view
+    assert 'requireText: "REVOKE ALL"' in view
+
+
+def test_agent_access_ui_never_renders_upstream_secrets_or_session_tokens() -> None:
+    view = _agent_access_view_source()
+    # The admin page receives no session token (it is delivered on /agent) and
+    # no upstream credential ever reaches this page.
+    assert "showToken(" not in view
+    assert "password" not in view.lower()
+    assert "credential_value" not in view
+    assert "secret" not in view.lower() or "upstream credentials are not" in view.lower()
+    assert "token_prefix" in view
+    assert "token_shown_once" not in view
+
+
+def test_agent_access_ui_states_that_credentials_stay_upstream() -> None:
+    view = _agent_access_view_source()
+    assert "Upstream credentials are not changed" in view or "never rotates" in view
+    assert "single-use" in view
+    assert "Destructive operations can never be granted" in view
+
+
+def test_agent_handoff_page_is_offline_and_storage_free() -> None:
+    assert '<script src="/agent/agent.js"></script>' in AGENT_HTML
+    assert "<script>" not in AGENT_HTML
+    assert not re.search(r"(src|href)=\"(?:https?:)?//", AGENT_HTML)
+    for forbidden in ("localStorage.", "sessionStorage.", "indexedDB.", "document.cookie"):
+        assert forbidden not in AGENT_JS
+    assert "history.replaceState" in AGENT_JS
+    assert "Authorization" in AGENT_JS
+    assert "navigator.clipboard.writeText" in AGENT_JS
+
+
+def test_agent_handoff_page_never_puts_the_token_in_the_url() -> None:
+    # The URL fragment carries the single-use handoff code only.
+    assert "code=" in AGENT_JS
+    assert "#token" not in AGENT_HTML
+    assert "?token" not in AGENT_HTML
+    assert "token=" not in AGENT_HTML
+
+
+def test_agent_handoff_page_has_accessible_status_and_manual_fallback() -> None:
+    assert 'aria-live="polite"' in AGENT_HTML
+    assert 'role="alert"' in AGENT_HTML
+    assert 'id="manual-form"' in AGENT_HTML
+    assert 'id="copy-token"' in AGENT_HTML
+    assert 'id="copy-json"' in AGENT_HTML
+    assert "This value is shown once" in AGENT_HTML

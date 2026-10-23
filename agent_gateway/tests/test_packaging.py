@@ -88,7 +88,8 @@ def test_image_runs_unprivileged_and_drops_privileges() -> None:
     assert "adduser" in DOCKERFILE and "-u 1000" in DOCKERFILE
     assert "USER root" not in DOCKERFILE
     run_script = (ADDON_DIR / "run.sh").read_text(encoding="utf-8")
-    assert "su-exec app:app" in run_script
+    assert 'APP_USER="${HAG_APP_USER:-app:app}"' in run_script
+    assert 'exec su-exec "$APP_USER"' in run_script
     assert "EXPOSE 8099 8098" in DOCKERFILE
     assert "HEALTHCHECK" in DOCKERFILE and "/healthz" in DOCKERFILE
     assert "BUILD_FROM" in DOCKERFILE
@@ -105,7 +106,8 @@ def test_image_has_no_baked_secrets_or_published_credentials() -> None:
 
 def test_run_script_drops_root_before_starting_the_app() -> None:
     script = (ADDON_DIR / "run.sh").read_text(encoding="utf-8")
-    assert "su-exec app:app" in script
+    assert 'APP_USER="${HAG_APP_USER:-app:app}"' in script
+    assert 'exec su-exec "$APP_USER"' in script
     assert "exec " in script
     assert "set -euo pipefail" in script
 
@@ -118,26 +120,38 @@ def test_apparmor_defines_exactly_one_profile() -> None:
 
 
 def test_apparmor_permits_s6_init_entrypoint() -> None:
-    """Regression: `/bin/sh: can't open '/init': Permission denied` at startup.
+    """Regression: `/bin/sh: can't open '/init'|'.../preinit': Permission denied`.
 
     The HA base image's ENTRYPOINT is the S6-Overlay v3 `/init` (PID 1, hence
     `init: false` in config.yaml so Supervisor does not add Docker's init).
-    A custom apparmor.txt replaces the default profile, so it must itself
-    grant read and execute access to /init and execute access to the s6 trees.
-    Supervisor may invoke /init through /bin/sh, which needs read access; an
-    execute-only rule can still produce `can't open '/init': Permission denied`.
-    Per HA developer docs, custom profiles for S6 base images must include the
-    relevant S6 rules.
+    A custom apparmor.txt replaces the default profile, so it must grant both
+    **read** and execute access to every S6 script: the kernel runs
+    `/bin/sh <script>` for a shebang, and the shell must open the file.
+    Execute-only (`ix`) rules reproduce the 0.2.x/0.3.0 failure, and a missing
+    read rule on `/package/**` reproduced it one stage later at `preinit`
+    (`s6-overlay-suexec: fatal: child failed with exit code 2`).
+
+    Detailed rule coverage (scripts, binaries, shared objects) is asserted in
+    tests/test_startup.py.
     """
+
     for rule in (
         "/init rix,",
-        "/package/** ix,",
-        "/command/** ix,",
-        "/etc/services.d/** rwix,",
-        "/etc/cont-init.d/** rwix,",
-        "/etc/cont-finish.d/** rwix,",
+        "/package/** rix,",
+        "/command/** rix,",
+        "/etc/services.d/** rix,",
+        "/etc/cont-init.d/** rix,",
+        "/etc/cont-finish.d/** rix,",
     ):
         assert rule in APPARMOR, rule
+    # No S6 script may be execute-only.
+    for line in APPARMOR.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("/") or not stripped.endswith(","):
+            continue
+        path, _, perms = stripped[:-1].partition(" ")
+        if path in {"/init", "/package/**", "/command/**"}:
+            assert "r" in perms, stripped
 
 
 def test_container_startup_chain_is_init_then_run_sh() -> None:
@@ -177,6 +191,6 @@ def test_gitignore_excludes_local_secrets_and_state(pattern: str) -> None:
 
 def test_ui_assets_are_packaged() -> None:
     pyproject = (ADDON_DIR / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'gateway = ["ui/static/*", "py.typed"]' in pyproject
+    assert 'gateway = ["ui/static/*", "ui/agent/*", "py.typed"]' in pyproject
     for name in ("index.html", "app.js", "styles.css"):
         assert (ADDON_DIR / "src" / "gateway" / "ui" / "static" / name).is_file(), name

@@ -8,6 +8,7 @@ import re
 import time
 import uuid
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -266,6 +267,31 @@ class AdminGateMiddleware:
         await self.app(scope, receive, send)
 
 
+def _page_guard(scope: Scope, path: str) -> tuple[int, dict[str, Any]] | None:
+    """Same-origin and method checks for the unauthenticated handoff page."""
+
+    method = str(scope.get("method", "GET")).upper()
+    if path == AGENT_REDEEM_PATH:
+        if method != "POST":
+            return 405, {"error": {"code": "method_not_allowed", "message": "POST is required"}}
+        content_type = (_header(scope, b"content-type") or "").split(";")[0].strip().lower()
+        if content_type != "application/json":
+            return 415, {
+                "error": {"code": "unsupported_media_type", "message": "application/json is required"}
+            }
+    elif method not in {"GET", "HEAD"}:
+        return 405, {"error": {"code": "method_not_allowed", "message": "GET is required"}}
+
+    host = _header(scope, b"host") or ""
+    origin = _header(scope, b"origin")
+    if origin and not _same_origin(origin, host):
+        return 403, {"error": {"code": "origin_rejected", "message": "origin is not allowed"}}
+    fetch_site = _header(scope, b"sec-fetch-site")
+    if fetch_site and fetch_site not in {"same-origin", "none"}:
+        return 403, {"error": {"code": "origin_rejected", "message": "cross-site request rejected"}}
+    return None
+
+
 def _same_origin(origin: str, host: str) -> bool:
     try:
         parsed = urlsplit(origin)
@@ -277,6 +303,13 @@ def _same_origin(origin: str, host: str) -> bool:
     if parsed.port and parsed.port not in {80, 443}:
         origin_netloc = f"{origin_netloc}:{parsed.port}"
     return origin_netloc == host.lower()
+
+
+#: Exact paths on the agent listener that must work before a session token
+#: exists.  Everything else (including /agent/api/session) still needs a bearer
+#: token.  These are matched exactly, never by prefix.
+AGENT_PAGE_PATHS = frozenset({"/agent", "/agent/", "/agent/styles.css", "/agent/agent.js"})
+AGENT_REDEEM_PATH = "/agent/api/redeem"
 
 
 class AgentAuthMiddleware:
@@ -331,6 +364,19 @@ class AgentAuthMiddleware:
                     send, 421, {"error": {"code": "host_rejected", "message": "host is not allowed"}}
                 )
                 return
+
+        if path in AGENT_PAGE_PATHS or path == AGENT_REDEEM_PATH:
+            # The handoff page is intentionally unauthenticated: the session
+            # credential does not exist yet.  It is still same-origin only and
+            # the redeem call must be a JSON POST, so a cross-site form cannot
+            # consume the code.
+            page_error = _page_guard(scope, path)
+            if page_error is not None:
+                page_status, page_body = page_error
+                await _send_json(send, page_status, page_body)
+                return
+            await self.app(scope, receive, send)
+            return
 
         origin = _header(scope, b"origin")
         if origin and origin.rstrip("/") not in self.settings.agent_allowed_origins:

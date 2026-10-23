@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Agent Gateway — session handoff</title>
+  <link rel="stylesheet" href="/agent/styles.css">
+</head>
+<body>
+  <main class="page">
+    <header class="masthead">
+      <span class="mark" aria-hidden="true">AG</span>
+      <div>
+        <h1>Agent Gateway session handoff</h1>
+        <p class="sub">Collect your temporary gateway credential. It is shown once.</p>
+      </div>
+    </header>
+
+    <section id="status-card" class="card" aria-live="polite">
+      <h2 id="status-title">Preparing…</h2>
+      <p id="status-detail" class="muted">Checking the handoff link.</p>
+      <div id="status-actions" class="actions" hidden></div>
+    </section>
+
+    <section id="manual-card" class="card" hidden>
+      <h2>Paste a handoff link</h2>
+      <p class="muted">
+        Handoff links are single-use and expire quickly. Ask the gateway administrator for a
+        fresh link if this one is no longer valid.
+      </p>
+      <form id="manual-form" class="form" autocomplete="off">
+        <label for="manual-code">Handoff link or code</label>
+        <input id="manual-code" name="code" type="text" inputmode="text" spellcheck="false"
+               placeholder="…/agent#code=…" required>
+        <button type="submit" class="button">Redeem</button>
+      </form>
+    </section>
+
+    <section id="session-card" class="card" hidden>
+      <div class="card-head">
+        <h2>Your session</h2>
+        <span id="session-badge" class="badge">active</span>
+      </div>
+      <dl class="facts">
+        <div><dt>Session</dt><dd id="fact-name">—</dd></div>
+        <div><dt>Expires</dt><dd id="fact-expires">—</dd></div>
+        <div><dt>Remaining</dt><dd id="fact-remaining">—</dd></div>
+        <div><dt>Operation classes</dt><dd id="fact-classes">—</dd></div>
+        <div><dt>Scopes</dt><dd id="fact-scopes">—</dd></div>
+        <div><dt>Upstream connections</dt><dd id="fact-connections">—</dd></div>
+      </dl>
+      <p class="note">
+        Writes still require a human approval in the management panel, whichever interface you use.
+      </p>
+    </section>
+
+    <section id="token-card" class="card" hidden>
+      <h2>Session token</h2>
+      <p class="warning" role="alert">
+        This value is shown once and is not stored by this page. Copy it now into your client's
+        secret configuration. Reloading the page will not show it again.
+      </p>
+      <div class="token-row">
+        <code id="token-value" class="token">—</code>
+        <button type="button" class="button" id="copy-token">Copy token</button>
+      </div>
+
+      <h3>Connection details</h3>
+      <dl class="facts">
+        <div><dt>Gateway base URL</dt><dd id="fact-base">—</dd></div>
+        <div><dt>REST API base</dt><dd id="fact-api">—</dd></div>
+        <div><dt>MCP endpoint</dt><dd id="fact-mcp">—</dd></div>
+        <div><dt>Authorization</dt><dd><code>Authorization: Bearer &lt;token&gt;</code></dd></div>
+      </dl>
+
+      <div class="actions">
+        <button type="button" class="button" id="copy-json">Copy connection JSON</button>
+        <button type="button" class="button ghost" id="check-status">Check session status</button>
+      </div>
+      <p class="note">
+        Never put the token in a URL or a shell command line. Prefer an environment variable or
+        your client's secret store.
+      </p>
+      <pre id="curl-example" class="code" aria-label="Example authenticated request"></pre>
+    </section>
+
+    <footer class="foot">
+      <p>
+        This page never shows upstream Home Assistant, Proxmox, or SSH credentials, and it does
+        not expose other agents' sessions.
+      </p>
+    </footer>
+  </main>
+  <div id="announcer" class="sr-only" aria-live="polite"></div>
+  <script src="/agent/agent.js"></script>
+</body>
+</html>
