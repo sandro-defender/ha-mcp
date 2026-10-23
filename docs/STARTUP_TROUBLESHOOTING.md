@@ -148,42 +148,96 @@ Supervisor applies (Supervisor renames the profile to the add-on slug but keeps
 the rules). Otherwise it falls back to the Docker default profile and prints
 that it did so — a green run without AppArmor does **not** prove the profile.
 
-## What the first real container run under the profile found
+## What the container run under the real profile found
 
-The container smoke test was extended to load `agent_gateway/apparmor.txt` into
-the kernel and enforce it (`--security-opt apparmor=ha_agent_gateway`). The
-first run reached S6 stage 2 — i.e. the read fix worked — and then stopped with:
+The container smoke test builds the image, loads `agent_gateway/apparmor.txt`
+into the kernel with `apparmor_parser`, starts the container with
+`--security-opt apparmor=ha_agent_gateway` (the same enforcement the Supervisor
+applies after renaming the profile to the add-on slug), and drives the whole
+lifecycle. It found four defects that static review had missed. All four are
+fixed in 0.4.0 and the job is green.
+
+**1. `/run.sh` had no rule.** The first run reached S6 stage 2 — so the read fix
+was correct — and then stopped with:
 
 ```text
 /run/s6/basedir/scripts/rc.init: line 105: /run.sh: Permission denied
 ```
 
-`/run.sh` is the add-on's `CMD`, executed by the stage-2 `rc.init`. The profile
-covered `/init`, `/package/**`, `/command/**` and the `/run/` **tree**
-(`/run/{,**}`), but `/run.sh` is a sibling of that directory, so it had no
-execute rule. 0.4.0 adds `/run.sh rix`, and `tests/test_startup.py` now lists
-`/run.sh` among the executables the S6 chain launches.
+`/run.sh` is the add-on `CMD`, executed by the stage-2 `rc.init`. The profile
+covered `/init`, `/package/**`, `/command/**` and the `/run/` **tree**, but
+`/run.sh` is a *sibling* of that directory. Fixed with `/run.sh rix`, and
+`/run.sh` is now part of the static startup contract.
 
-This is the value of the container job: a static rule review did not catch it,
-and neither did the process-level smoke test (which bypasses AppArmor and S6).
-Runs where AppArmor cannot be loaded on the runner report a `notice` annotation
-and are **not** evidence that the profile is correct.
+**2. `ps` could not read `/proc`.**
+
+```text
+ps: can't open '/proc': Permission denied
+```
+
+`/proc/**` does not match the `/proc/` directory itself (the same reason
+`/data/` needs its own rule). Besides breaking every in-container diagnostic,
+the shutdown path enumerates `/proc`; without it the container stopped all
+services and then never exited. Fixed with `/proc/ r` and `/sys/ r`.
+
+**3. Signal delivery inside the container was denied.** Measured directly:
+
+| Direction | Result |
+| --- | --- |
+| `kill -TERM <app pid>` from inside the container | `Operation not permitted` |
+| `kill -TERM <app pid>` from the host | app logs `shutdown requested`, exits cleanly |
+
+The app was never the problem. Two independent causes:
+
+- **`CAP_KILL` was missing.** The profile lists capabilities, so unlisted ones
+  are denied; the app runs as uid 1000 while the supervisor stays root, and
+  signalling across uids needs `CAP_KILL`. Fixed with `capability kill`.
+- **Signal rules.** A `signal (send) set=(...)`/`signal (receive)` pair (and the
+  example profile's `peer=` form) did not authorise delivery, so those rules
+  are gone. Without signal rules AppArmor does not mediate signals, exactly as
+  Docker's default profile behaves. Every process in the container is one trust
+  domain, so nothing is lost at the boundary this profile defends.
+
+**4. `S6_CMD_RECEIVE_SIGNALS=1` is unusable on Alpine.** s6-overlay implements
+that switch in its `CMDSIG` helper:
+
+```sh
+kill -s "${0##*/SIG}" -- "$pid"
+```
+
+busybox `kill` (the Alpine shell builtin) rejects `--` with
+`invalid number '--'`, so the diverted signal is never delivered and the
+container hangs instead of stopping. It is therefore **not** used. Instead the
+image sets `S6_KILL_GRACETIME=10000` so the TERM that s6 sends to the remaining
+processes at the end of shutdown has time to drain both listeners, and the app
+bounds that drain with `timeout_graceful_shutdown=5`.
+
+### What the green job proves
+
+- The image builds, and `/init`, `preinit`, `stage0` and `/run.sh` are readable
+  and executable.
+- S6 completes stage 2 under the **enforced** profile, the gateway starts as
+  uid 1000, `/healthz` and `/readyz` answer on both listeners.
+- `docker restart` comes back ready, and `docker stop` exits **0** (no SIGKILL)
+  — i.e. the app receives TERM, drains, and the container shuts down cleanly.
+- `tests/test_startup.py` (31 checks) covers the same contract statically.
+
+A run where the runner cannot load the profile reports a `notice` annotation and
+is **not** evidence that the rules are correct.
 
 ## What remains unverified
 
-- No Home Assistant OS host, Supervisor, or `apparmor_parser` was available in
-  the development environment, and this environment has no Docker daemon or
-  registry access (`ghcr.io` / `registry-1.docker.io` are unreachable).
-  Therefore:
-  - the image was not built here;
-  - the profile was not loaded by a real kernel;
-  - the denial was not reproduced or cleared end-to-end on HA OS.
-- The diagnosis is inferred from the pinned upstream sources above plus the
-  exact error strings, and the fix is a defensive superset of the documented
-  HA example (which grants `ix` only and compensates with a broad `file,`
-  rule). The minimal rule set for a given Supervisor version was not measured.
-- Supervisor-side behaviour (profile install, `security_opt`, `init: false`)
-  is verified from source, not from a live Supervisor.
+- No Home Assistant OS host or Supervisor was available. The image was built and
+  booted under real Docker and a real AppArmor kernel by CI, but not by the
+  Supervisor, so Supervisor-side behaviour (profile install/rename,
+  `security_opt`, `init: false`, watchdog) is verified from source only.
+- The rule set is a defensive superset of the documented HA example (which
+  grants `ix` only and compensates with a broad `file,` rule); it was not
+  minimised against a particular Supervisor version.
+- The reported failure itself was not reproduced: this container's *first*
+  failure was the `/run.sh` denial, which is the same class of defect one stage
+  later. The read-denial diagnosis for `/init` and `libexec/preinit` remains
+  inferred from the pinned sources plus the exact error strings.
 
 ## Related files
 

@@ -238,8 +238,8 @@ CI: `lint + type-check + test` → `static UI checks` → `amd64 image build`. R
 | Check | Result |
 | :--- | :--- |
 | `ruff check` / `ruff format --check` / `mypy --strict` | pass |
-| Container startup smoke (`tools/startup-smoke/docker-smoke.sh`, CI `image` job) | Runs the built image under the real profile; builds, S6 stage 2, `/healthz`, `/readyz`, uid 1000, restart, SIGTERM exit 0 |
-| `pytest -q` | **320 passed** (incl. 33 temporary-access broker tests, the static S6/AppArmor startup contract, concurrent handoff redemption, restart revocation, epoch rejection, and the Project Journal suite) |
+| Container startup smoke (`tools/startup-smoke/docker-smoke.sh`, CI `image` job) | **pass** — built image started with `apparmor=ha_agent_gateway` loaded from `apparmor.txt`; S6 stage 2, `/healthz` + `/readyz` 200, gateway uid 1000, `docker restart` ready, `docker stop` exit 0 (no SIGKILL) |
+| `pytest -q` | **323 passed** (incl. 33 temporary-access broker tests, the static S6/AppArmor startup contract, concurrent handoff redemption, restart revocation, epoch rejection, and the Project Journal suite) |
 | `tools/startup-smoke/smoke.py` (real `run.sh`, both listeners, Ingress gate, SIGTERM, restart) | pass — 2 cycles, health/readiness, clean exit 0 |
 | jsdom panel smoke (`tools/ui-smoke`: panel, paths, Agent Access, agent handoff page) | pass — no runtime errors; session issue/revoke and handoff rendering exercised against stubbed API payloads |
 | `node --check app.js` / `agent.js` + `grep` for inline scripts / remote assets / browser storage | pass |

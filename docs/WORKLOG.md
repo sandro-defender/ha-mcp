@@ -29,7 +29,7 @@ restart policy revokes temporary sessions, expires approvals, purges handoffs
 and bumps a persisted epoch without touching upstream secrets. New 12th panel
 section **Agent Access**.
 
-**Verified:** `pytest -q` → 320 passed; `ruff check` clean; `ruff format
+**Verified:** `pytest -q` → 323 passed; `ruff check` clean; `ruff format
 --check` 73 files; `mypy src` success; `tools/startup-smoke/smoke.py` PASS
 (2 cycles, SIGTERM exit 0, restart); four jsdom harnesses via `npm test`
 exit 0; `node --check` on both JS bundles.
