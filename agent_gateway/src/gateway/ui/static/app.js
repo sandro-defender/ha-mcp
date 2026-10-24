@@ -684,6 +684,17 @@
     state.status = await api("status");
   }
 
+  function applyAcknowledgement(summary) {
+    // `POST releases/acknowledge` returns the full release summary; mirror the
+    // notice fields into the status snapshot the dashboard renders from.
+    if (!summary || !state.status) return;
+    if (!state.status.release) state.status.release = {};
+    state.status.release.post_update_notice =
+      summary.post_update_notice || state.status.release.post_update_notice;
+    if (summary.installed_version) state.status.release.installed_version = summary.installed_version;
+    if (summary.links) state.status.release.links = summary.links;
+  }
+
   /* -------------------------------------------------------------- dashboard */
 
   async function viewDashboard() {
@@ -825,10 +836,18 @@
     if (dismissBtn) dismissBtn.addEventListener("click", function (event) {
       withBusy(event.currentTarget, function () {
         return guarded(async function () {
-          await api("releases/acknowledge", { method: "POST", body: {} });
-          // This view renders the notice from the boot-time state.status
-          // snapshot, so acknowledge first and then refresh that snapshot.
-          await refreshStatus();
+          var summary = await api("releases/acknowledge", { method: "POST", body: {} });
+          // The acknowledgement response is the server's authoritative
+          // post-dismiss notice state: apply it to the render snapshot first
+          // so a successful dismissal disappears immediately even when the
+          // follow-up full-status refresh fails.
+          applyAcknowledgement(summary);
+          try {
+            await refreshStatus();
+          } catch (refreshError) {
+            // Dismissal already persisted; a failed status refresh must not
+            // keep the acknowledged notice on screen.
+          }
           toast("Notice dismissed.");
           await navigate("dashboard");
         });
@@ -3667,9 +3686,16 @@
     if (ackBtn) ackBtn.addEventListener("click", function (event) {
       withBusy(event.currentTarget, function () {
         return guarded(async function () {
-          await api("releases/acknowledge", { method: "POST", body: {} });
-          // Keep the dashboard's state.status-driven notice in sync too.
-          await refreshStatus();
+          var summary = await api("releases/acknowledge", { method: "POST", body: {} });
+          // Apply the acknowledged notice to the dashboard snapshot first so
+          // a successful dismissal sticks even if the status refresh fails.
+          applyAcknowledgement(summary);
+          try {
+            await refreshStatus();
+          } catch (refreshError) {
+            // Dismissal already persisted; navigation below re-renders this
+            // view from a fresh releases fetch.
+          }
           toast("Post-update notice dismissed.");
           await navigate("updates");
         });

@@ -26,14 +26,22 @@ after every phase.
 | UI-polish preservation (Prompt #1) | P0 | No design-system changes made in this phase; `design-system/` untouched | PASS |
 | Architecture map | P0 | Add-on config/Dockerfile/S6 `run.sh`/AppArmor; two ASGI listeners via `api/apps.py`; `AdminGateMiddleware` (Ingress trust) vs `AgentAuthMiddleware` (bearer); `Runtime` wires vault/policy/approvals/audit/journal/agent-access; SQLite schema v4 (`storage/db.py`); UI `ui/static` 12-section panel; tests `tests/*` + `tools/ui-smoke` + `tools/startup-smoke` | PASS |
 
-## Phase 1 — changelog dismissal
+## Phase 1 — changelog dismissal (2026-10-24)
 
 | Requirement | Priority | Evidence | Classification |
 | --- | --- | --- | --- |
-| Reproduce the reported dismissal failure | P0 | Pending | NOT TESTED |
-| Root cause traced (UI → API → persistence) | P0 | Pending | NOT TESTED |
-| Fix + regression tests | P0 | Pending | NOT TESTED |
-| Release history reopen path | P1 | Pending | NOT TESTED |
+| Reproduce the reported dismissal failure | P0 | Live reproduction against a real gateway process (temp `/data`, real HTTP): fresh boot `post_update_notice.show=true` → `POST /api/admin/releases/acknowledge` 200 → status hides notice → process restart keeps it hidden → no-CSRF 403 → no-Ingress-user 401. The main-path defect reported from the pre-0.4.2 era is **not present** in this build (fixed by merged PR #9). A residual defect WAS reproduced: with a successful acknowledge followed by a **failed status refresh**, the dashboard banner stayed visible (`tools/ui-smoke/changelog_smoke.mjs` S4 against `HEAD`'s `app.js` → exit 1) | FIXED |
+| Root cause traced (UI → API → persistence) | P0 | UI renders the notice from the boot-time `state.status` snapshot (`app.js` dashboard `renderDashboard`, Updates `viewUpdates`); `POST /api/admin/releases/acknowledge` → `ReleaseService.acknowledge_version` persists installation-scoped `seen_version` in SQLite `settings`; `show = seen_version != __version__`. Residual root cause: both dismiss handlers `await refreshStatus()` *inside* `guarded()` with no fallback — a refresh failure after successful persistence kept the stale snapshot on screen and skipped navigation | FIXED |
+| Fix through frontend/backend/persistence layers | P0 | Handlers now apply the acknowledge response (authoritative `post_update_notice`) to the status snapshot via `applyAcknowledgement()`, wrap the follow-up `refreshStatus()` in best-effort `try/catch`, then re-render; backend persistence unchanged (already correct); no CSS hiding, no control removal | FIXED |
+| Dismiss control works desktop/mobile, keyboard activation | P0 | Native `<button>` elements (`#dismiss-banner`, `#ack-release`) → Enter/Space dispatch `click`; `withBusy` preserves a single activation; verified at jsdom level only | PARTIAL — jsdom-verified; real browser BLOCKED (no browser/Ingress in sandbox) |
+| Disappears immediately after successful dismissal | P0 | jsdom S1/S2 (immediate hide + no reappear on revisit) and new S4 (status refresh failure path) | FIXED at jsdom level |
+| Persists across reloads/restart | P0 | `test_acknowledge_endpoint_persists_and_updates_status`, `test_acknowledgement_survives_runtime_restart`, plus the live restart reproduction above | FIXED |
+| New release can still be announced | P0 | `test_releases.py` version-transition test (old-version ack cannot dismiss new release) + jsdom S2 (genuinely new release reappears) | FIXED |
+| Failed persistence handled honestly | P0 | jsdom S3: failed acknowledge → notice stays visible, server state unchanged, no unhandled rejection; 401/`ingress_required` path shows "Management session lost" and keeps the notice | FIXED |
+| Correct storage scope | P1 | Installation-scoped `seen_version` in the add-on's SQLite settings (shared by administrators of one add-on), documented in `README.md`; not represented as per-user state | PASS |
+| Release history reopen path | P1 | Updates & Changelog section keeps full release history; dashboard "View changelog" routes there; jsdom S1/S2 navigation checks | PASS |
+| Real Ingress browser confirmation | P1 | Requires HA Ingress + real browser | BLOCKED — infrastructure |
+| Regression tests | P0 | New jsdom scenario S4 (fails on pre-fix `app.js` exit 1, passes post-fix exit 18/18 checks); full suites re-run: `pytest -q` **356 passed**, all five `tools/ui-smoke` harnesses PASS, `node --check` PASS, Ruff PASS | FIXED |
 
 ## Phase 2 — startup, lifecycle, and runtime health
 

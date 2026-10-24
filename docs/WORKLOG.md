@@ -5,6 +5,35 @@
 > Runtime detail lives in the gateway Project Journal; this file is the
 > repository-side mirror (`AGENTS.md` §2).
 
+## 2026-10-24 — Prompt #2 Phase 0/1: baseline + changelog dismissal verification and residual fix
+
+**Phase 0 (baseline):** branch `arena/d6e20eec-ha-mcp` @ `7d0de10`, clean tree,
+version 0.4.2, no open PR → opened **PR #11** (single PR for this task) with the
+baseline comment. Shallow clone (1 commit) recorded as a history limitation.
+Baseline: `pytest -q` **356 passed**; Ruff/format/mypy strict pass; five
+jsdom harnesses pass; `tools/startup-smoke/smoke.py` PASS.
+
+**Phase 1 (changelog dismissal):**
+- Live reproduction against a real gateway process (temp data dir, real HTTP
+  on 18199/18198): fresh boot notice `show=true` → acknowledge 200 → status
+  hides it → **SIGTERM + restart keeps it hidden** → no-CSRF 403 → no
+  Ingress-user 401. The headline pre-0.4.2 bug is already fixed by PR #9 in
+  this build; backend persistence, scope, and version-transition logic are
+  correct.
+- Residual defect reproduced: both dismiss handlers awaited `refreshStatus()`
+  inside `guarded()` with no fallback, so a status-refresh failure **after a
+  successful acknowledgement** kept the banner visible and skipped navigation.
+  Evidence: `tools/ui-smoke/changelog_smoke.mjs` new S4 scenario against the
+  pre-fix `app.js` from `HEAD` → **exit 1**; fixed `app.js` → **exit 0**.
+- Fix: `applyAcknowledgement()` mirrors the acknowledge response (server
+  truth) into the render snapshot; follow-up status refresh is best-effort
+  (`try/catch`); then re-render. No CSS hiding, no removed controls.
+- Verification: changelog harness **18/18 checks**; all five harnesses PASS;
+  `pytest -q` **356 passed**; `node --check` PASS; Ruff/format PASS.
+
+**Not run (honest gaps):** real browser/keyboard/touch verification inside HA
+Ingress (no browser/Ingress in sandbox) — jsdom-level only; no live HA OS.
+
 ## 2026-10-24 — Guided agent setup, AI handoff prompt, and SSH username UX
 
 **Agent/session:** Arena coding agent, branch `arena/98324188-ha-mcp`, based on
