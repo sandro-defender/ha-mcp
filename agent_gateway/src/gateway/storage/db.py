@@ -591,6 +591,16 @@ class SettingsStore:
         "agent_access_max_ttl_seconds": 86400,
         "agent_sessions_revoke_on_restart": True,
         "agent_api_base_url": "",
+        # Automatic add-on shutdown (see gateway/lifecycle.py).  The first two
+        # are seeded from the add-on options until an administrator edits them
+        # in the panel, which flips auto_shutdown_customized to True.
+        "auto_shutdown_enabled": True,
+        "auto_shutdown_timeout_minutes": 30,
+        "auto_shutdown_customized": False,
+        "lifecycle_last_shutdown_reason": "",
+        "lifecycle_last_shutdown_at": None,
+        "lifecycle_last_shutdown_result": "",
+        "lifecycle_last_activity_at": None,
         # Internal: invalidates every temporary session across restarts when
         # the restart policy is enabled.  Never exposed through the API.
         "session_epoch": 0,

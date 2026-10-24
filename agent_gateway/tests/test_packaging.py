@@ -69,6 +69,8 @@ def test_option_defaults_match_the_application() -> None:
     defaults = Settings(data_dir=Path("/tmp/unused"))
     assert options["audit_retention_days"] == defaults.audit_retention_days == 30
     assert options["approval_ttl_seconds"] == defaults.approval_ttl_seconds == 600
+    assert options["auto_shutdown_enabled"] is defaults.auto_shutdown_enabled is True
+    assert options["auto_shutdown_timeout_minutes"] == defaults.auto_shutdown_timeout_minutes == 30
     assert options["tls_certfile"] == ""
     assert options["tls_keyfile"] == ""
     assert options["log_level"] == "info"

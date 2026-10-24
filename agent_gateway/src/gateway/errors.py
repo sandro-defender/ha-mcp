@@ -139,3 +139,12 @@ class OperationTimeout(GatewayError):
 class EmergencyDisabled(GatewayError):
     def __init__(self) -> None:
         super().__init__("agent_access_disabled", "agent access is disabled by the administrator", 503)
+
+
+class ShuttingDown(GatewayError):
+    def __init__(self) -> None:
+        super().__init__(
+            "shutting_down",
+            "the gateway is shutting down and is not accepting new agent sessions or operations",
+            503,
+        )

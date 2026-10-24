@@ -31,6 +31,8 @@ options:
   tls_keyfile: ""
   audit_retention_days: 30
   approval_ttl_seconds: 600
+  auto_shutdown_enabled: true
+  auto_shutdown_timeout_minutes: 30
 schema:
   log_level: "list(debug|info|warning|error)"
   admin_user_ids:
@@ -39,3 +41,5 @@ schema:
   tls_keyfile: "str"
   audit_retention_days: "int(1,3650)"
   approval_ttl_seconds: "int(30,3600)"
+  auto_shutdown_enabled: "bool"
+  auto_shutdown_timeout_minutes: "int(5,1440)"

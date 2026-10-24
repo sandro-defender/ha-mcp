@@ -59,17 +59,19 @@ after every phase.
 | Graceful shutdown on SIGTERM | P0 | Startup smoke: SIGTERM handled, exit 0, no traceback; `test_shutdown_budget_is_configured`, `test_profile_leaves_signals_unmediated` | PASS — process level |
 | Container build/boot | P0 | Docker daemon unavailable locally; CI amd64 image + docker-smoke job must cover | BLOCKED locally / CI-gated |
 
-## Phase 3 — automatic add-on shutdown through Supervisor
+## Phase 3 — automatic add-on shutdown through Supervisor (2026-10-24)
 
 | Requirement | Priority | Evidence | Classification |
 | --- | --- | --- | --- |
-| Supervisor mechanism verified against official docs | P0 | Pending | NOT TESTED |
-| Settings UI (enable/timeout/manual stop/state/warnings) | P0 | Pending | NOT TESTED |
-| Inactivity definition and timer correctness | P0 | Pending | NOT TESTED |
-| Safe shutdown sequence | P0 | Pending | NOT TESTED |
-| Restart/recovery documentation | P1 | Pending | NOT TESTED |
-| Automated tests (mocked Supervisor) | P0 | Pending | NOT TESTED |
-| Live Supervisor stop | P1 | Pending | BLOCKED — no HA OS in sandbox |
+| Supervisor mechanism verified against official docs | P0 | Home Assistant developer docs ("App communication", Supervisor API endpoints reference): `POST /addons/self/stop`, authenticated with `Authorization: Bearer $SUPERVISOR_TOKEN`; **self-service `/addons/self/*` endpoints work without `hassio_api` or a role** → no new add-on permission requested (`config.yaml` unchanged on permissions; security implication: none). `httpx` client honors `trust_env=False` (no proxy env leakage); URL overridable via `HAG_SUPERVISOR_URL`/`SUPERVISOR` for test rigs only | PASS — docs-verified; not live-verified |
+| Settings UI (enable/timeout/manual stop/state/warnings) | P0 | Settings section card: enable checkbox, validated timeout input (range from server), save → `PUT /api/admin/lifecycle/settings`; manual "Shut down add-on now" → confirm dialog explaining UI loss + Home Assistant START instructions → `POST /api/admin/lifecycle/shutdown`; live status rows (state, Supervisor availability, next auto-stop, last activity, last shutdown reason/time/result), explicit boot/auto-start warning. jsdom: 11 new `panel_smoke` checks (render, warning text, range validation error, PUT recorded, confirm dialog content, POST recorded) | PASS at jsdom level; real browser BLOCKED |
+| Inactivity definition and timer correctness | P0 | Policy in `lifecycle.py` docstring + tests: counted = requests passing the Ingress admin gate + requests with valid non-expired/non-revoked agent credentials; NOT counted = `/healthz`+`/readyz`, unauthenticated, failed/revoked/expired auth, static page loads, background work. Single evaluation task (`lifecycle_loop`, 10 s), one shutdown lock (no duplicate timers), in-flight counter defers ticks, monotonic clock. Tests: `test_inactivity_timer_expiry`, `test_tick_is_inert_when_disabled_or_in_flight`, `test_unauthenticated_and_health_traffic_does_not_reset_timer`, `test_expired_token_does_not_reset_timer`, `test_authenticated_admin_activity_counts`, `test_failed_shutdown_backoff_for_automatic_ticks` | FIXED/TESTED |
+| Safe shutdown sequence | P0 | Order implemented and asserted: state flip (rejects new agent work) → bounded in-flight drain (5 s) → persist metadata → configured temporary-session revocation policy → sanitized audit event → Supervisor stop → honest outcome handling (accepted/unconfirmed/rejected/unavailable), failed attempts revert to running with backoff; accepted-but-not-stopped containers are reverted by a 30 s watchdog instead of leaving a zombie state. Tests: drain (`test_shutdown_drains_inflight_agent_requests`, `test_shutdown_proceeds_after_drain_deadline`), duplicate (`409`), revocation on/off, persistence across restart, backoff | TESTED (mocked Supervisor) |
+| New agent sessions/operations rejected during shutdown | P0 | Agent middleware503 `shutting_down` before auth (covers `/mcp`, `/api/v1`, `/agent` page, redeem) with `Retry-After`; issuance endpoint raises `ShuttingDown` 503; `/readyz` flips 503 with `checks.lifecycle`, `/healthz` stays 200 | TESTED (ASGI + process level) |
+| Restart/recovery documentation | P1 | UI hint + `DOCS.md`/`README` sections (Phase 8): restart via Home Assistant add-on START; `boot: auto` means a reboot can start it again before the idle timer stops it; no self-restart claim | PASS — docs rows confirmed in Phase 8 |
+| Automated tests (mocked Supervisor) | P0 | `tests/test_lifecycle.py` **23 tests**: timer, activity policy, settings validation, endpoint/auth/outcome classification via respx on the real `supervisor_stop` caller, drain, duplicate, revocation, persistence, backoff, gates, token non-leakage (responses+audit+logs), API contract | PASS — all Supervisor interactions mocked |
+| Process-level integration (real HTTP both sides) | P0 | Live sandbox run: real gateway process + local mock Supervisor HTTP server: `POST /addons/self/stop` received with `Authorization: Bearer <token>`, 202 `stopping`/`confirmed:true`, agent503/healthz200/readyz503, duplicate409, no token in responses or process logs, no traceback | PASS — process level, **Supervisor mocked** |
+| Live Supervisor stop (real HA OS) | P1 | Requires the user's Home Assistant OS add-on environment | BLOCKED — infrastructure; mocked tests above are not a live claim |
 
 ## Phase 4 — IP allowlist/denylist and connection attempts
 

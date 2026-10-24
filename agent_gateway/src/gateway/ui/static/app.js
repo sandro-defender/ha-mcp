@@ -2814,9 +2814,81 @@
   /* --------------------------------------------------------------- settings */
 
   async function viewSettings() {
-    const [settingsData, vault] = await Promise.all([api("settings"), api("vault")]);
+    const [settingsData, vault, lifecycle] = await Promise.all([
+      api("settings"),
+      api("vault"),
+      api("lifecycle"),
+    ]);
     const settings = settingsData.settings;
     const vaultMeta = state.status.vault;
+    const lcRange = lifecycle.timeout_range_minutes || [5, 1440];
+    const lcRunning = lifecycle.state === "running";
+    const lcRemaining = lifecycle.inactivity_remaining_seconds;
+    const lcLast = lifecycle.last_shutdown;
+    const lifecycleCard = `
+      <section class="card glass mt-4" aria-labelledby="shutdown-title">
+        <div class="card-header">
+          <h3 id="shutdown-title">Automatic shutdown</h3>
+          ${lcRunning ? badge("running", "ok") : badge("shutting down", "warn")}
+        </div>
+        <div class="notice" ${lifecycle.enabled ? 'data-tone="warn"' : ""}>
+          ${icon("alert", 18)}
+          <div>
+            <strong>${lifecycle.enabled ? "The add-on stops itself after inactivity" : "Automatic shutdown is off"}</strong>
+            ${lifecycle.enabled
+              ? "After the inactivity timeout, the gateway asks Home Assistant to stop this add-on to save CPU and memory. The Ingress UI becomes unavailable as soon as the add-on stops."
+              : "The add-on keeps running until you stop it manually or Home Assistant does."}
+          </div>
+        </div>
+        <form class="form mt-3" id="lifecycle-form" novalidate>
+          <label class="checkbox-row">
+            <input type="checkbox" id="lc-enabled" ${lifecycle.enabled ? "checked" : ""}>
+            <span>Shut down the add-on automatically after inactivity</span>
+          </label>
+          <div class="form-row mt-2">
+            <div class="field">
+              <label for="lc-timeout">Inactivity timeout (minutes)</label>
+              <input id="lc-timeout" type="number" min="${lcRange[0]}" max="${lcRange[1]}" required
+                     value="${esc(lifecycle.timeout_minutes)}" ${lifecycle.enabled ? "" : "disabled"}>
+              <p class="field-hint">Allowed range ${lcRange[0]}–${lcRange[1]} minutes. Only authenticated agent and panel activity counts; health checks and failed logins do not.</p>
+            </div>
+          </div>
+          <div class="button-row">
+            <button type="submit" class="button" data-variant="primary" id="save-lifecycle">
+              ${icon("check", 16)}<span>Save shutdown settings</span>
+            </button>
+          </div>
+        </form>
+        <dl class="detail-list mt-3">
+          <div class="detail-row"><dt>Supervisor API</dt><dd>${
+            lifecycle.supervisor_available ? badge("available", "ok") : badge("unavailable", "warn")
+          }</dd></div>
+          <div class="detail-row"><dt>Next automatic stop</dt><dd>${
+            !lifecycle.enabled ? "disabled"
+              : lcRemaining === null || lcRemaining === undefined ? "—"
+              : `in about ${Math.max(1, Math.ceil(lcRemaining / 60))} min (no activity yet counted)`
+          }</dd></div>
+          <div class="detail-row"><dt>Last activity</dt><dd>${
+            lifecycle.last_activity_at ? `${esc(fmtDate(lifecycle.last_activity_at))} · ${esc(lifecycle.last_activity_kind || "unknown")}` : "—"
+          }</dd></div>
+          <div class="detail-row"><dt>Last shutdown</dt><dd>${
+            lcLast
+              ? `${badge(String(lcLast.result || "unknown"), lcLast.result === "accepted" ? "ok" : "warn")} ${esc(lcLast.reason || "unknown reason")} · ${esc(lcLast.at ? fmtDate(lcLast.at) : "unknown time")}`
+              : "none recorded"
+          }</dd></div>
+        </dl>
+        <div class="danger-zone mt-3">
+          <button type="button" class="button" data-variant="danger" id="shutdown-now" ${lcRunning ? "" : "disabled"}>
+            ${icon("alert", 16)}<span>${lcRunning ? "Shut down add-on now" : "Shutting down…"}</span>
+          </button>
+        </div>
+        <p class="field-hint mt-2">
+          <strong>Warning:</strong> after a shutdown the Ingress UI is unavailable until you start the add-on again from
+          Home Assistant → Settings → Add-ons → Home Assistant Agent Gateway → START. If the add-on is set to start on boot,
+          the next Home Assistant reboot starts it again (and the idle timer may stop it later).
+          With automatic shutdown enabled and start-on-boot set, expect short-lived runs after each reboot.
+        </p>
+      </section>`;
     $("#section").innerHTML = `
       <div class="grid grid-2">
         <section class="card glass" aria-labelledby="emergency-title">
@@ -2942,6 +3014,8 @@
         </section>
       </div>
 
+      ${lifecycleCard}
+
       <section class="card glass mt-4" aria-labelledby="diag-title">
         <div class="card-header"><h3 id="diag-title">Diagnostics &amp; Health</h3><span class="card-hint">redacted bundle — zero secrets</span></div>
         <div class="grid grid-2">
@@ -3059,6 +3133,71 @@
     rotateForm.addEventListener("submit", (event) => {
       event.preventDefault();
       rotateKey(rotateForm);
+    });
+
+    /* Automatic shutdown settings */
+    const lifecycleForm = $("#lifecycle-form");
+    attachBlurValidation(lifecycleForm);
+    const lcEnabled = $("#lc-enabled");
+    const lcTimeout = $("#lc-timeout");
+    lcEnabled.addEventListener("change", () => {
+      lcTimeout.disabled = !lcEnabled.checked;
+    });
+    lifecycleForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      clearErrors(lifecycleForm);
+      const timeout = Number(lcTimeout.value);
+      const errors = [];
+      if (!Number.isFinite(timeout) || timeout < lcRange[0] || timeout > lcRange[1]) {
+        errors.push({
+          fieldId: "lc-timeout",
+          message: `Enter an inactivity timeout between ${lcRange[0]} and ${lcRange[1]} minutes.`,
+        });
+      }
+      if (errors.length) {
+        showErrors(lifecycleForm, "Shutdown settings were not saved.", errors);
+        return;
+      }
+      withBusy($("#save-lifecycle"), () =>
+        guarded(async () => {
+          await api("lifecycle/settings", {
+            method: "PUT",
+            body: { enabled: lcEnabled.checked, timeout_minutes: timeout },
+          });
+          toast("Shutdown settings saved.");
+          await loadRoute("settings", { focus: false });
+        })
+      ).catch((error) => showErrors(lifecycleForm, "Shutdown settings were not saved.", [{ message: errorText(error) }]));
+    });
+
+    const shutdownBtn = $("#shutdown-now");
+    shutdownBtn.addEventListener("click", async () => {
+      const confirmed = await confirmAction({
+        title: "Shut down the add-on now?",
+        message:
+          "The gateway will ask Home Assistant to stop this add-on through the Supervisor. " +
+          "The Ingress UI becomes unavailable as soon as the add-on stops. " +
+          "Start it again from Home Assistant → Settings → Add-ons → Home Assistant Agent Gateway → START.",
+        confirmLabel: "Shut down add-on",
+        variant: "danger",
+        dangerZone: true,
+      });
+      if (!confirmed) return;
+      await withBusy(shutdownBtn, () =>
+        guarded(async () => {
+          const result = await api("lifecycle/shutdown", { method: "POST", body: {} });
+          toast(
+            result.confirmed
+              ? "Home Assistant accepted the stop request — the add-on is shutting down."
+              : "Stop requested; Home Assistant did not confirm. Check the add-on state from Home Assistant.",
+            result.confirmed ? "danger" : "warn"
+          );
+          await loadRoute("settings", { focus: false });
+        })
+      ).catch(() => {
+        // guarded() already reported the failure (rejected/unavailable/409);
+        // keep the page usable and do not create an unhandled rejection.
+      });
     });
   }
 

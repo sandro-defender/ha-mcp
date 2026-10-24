@@ -5,6 +5,61 @@
 > Runtime detail lives in the gateway Project Journal; this file is the
 > repository-side mirror (`AGENTS.md` §2).
 
+## 2026-10-24 — Prompt #2 Phase 3: automatic add-on shutdown through Supervisor
+
+**Mechanism verified (official Home Assistant docs, not assumption):**
+`POST http://supervisor/addons/self/stop` with `Authorization: Bearer
+$SUPERVISOR_TOKEN`; self-service `/addons/self/*` endpoints are available to
+every add-on **without** `hassio_api`/role — therefore **no new add-on
+permission was requested**. Supervisor response classification implemented:
+`accepted` (2xx + result ok) / `unconfirmed` (sent, no reply — Supervisor may
+be stopping us) / `rejected` (explicit refusal) / `unavailable` (never
+reached). Unconfirmed and accepted stops arm a 30 s revert watchdog so the
+add-on never zombie-blocks agents if the container is not actually stopped.
+
+**Implemented:**
+- `src/gateway/lifecycle.py` — `LifecycleService`: documented activity policy
+  (authenticated agent + Ingress admin traffic only; health/readiness,
+  unauthenticated, failed/expired/revoked auth never reset the timer),
+  monotonic clock, single evaluation loop, one shutdown lock, bounded
+  in-flight drain, persisted shutdown metadata, configured temporary-session
+  revocation applied at shutdown, sanitized audit events
+  (`lifecycle.shutdown` / `lifecycle.shutdown_result`), failure backoff.
+- Middleware hooks: `AdminGateMiddleware` records admin activity after all
+  gate checks; `AgentAuthMiddleware` records agent activity only after full
+  authentication and blocks all agent surfaces with503 `shutting_down`
+  (before auth, so redeem/page/MCP/REST are all gated) while keeping
+  `/healthz` 200 and flipping `/readyz` 503 with `checks.lifecycle`.
+- `POST /api/admin/lifecycle/shutdown` (202 stopping/stop_requested, 409
+  duplicate, 502 rejected, 503 unavailable), `GET /api/admin/lifecycle`,
+  `PUT /api/admin/lifecycle/settings` (5–1440 min validation).
+- Add-on options `auto_shutdown_enabled` (default **true**) and
+  `auto_shutdown_timeout_minutes` (default **30**, schema `int(5,1440)`);
+  seeded into the DB until first panel edit (panel wins afterwards).
+- Settings UI card: enable/timeout form, live status (state, Supervisor
+  availability, next auto-stop, last activity, last shutdown), manual shutdown
+  with confirmation + UI-loss warning + Home Assistant START instructions +
+  boot-auto caveat.
+
+**Tests/evidence:**
+- `tests/test_lifecycle.py` → **23 passed** (respx on the real HTTP caller
+  asserts URL + `Authorization: Bearer` header + outcome classes; injected
+  caller for sequencing; token non-leakage in responses/audit/logs).
+- Process-level integration (live sandbox): real gateway process + mock
+  Supervisor HTTP server → `POST /addons/self/stop` received with the bearer
+  token; 202 confirmed; agent503/healthz200/readyz503; duplicate409; no token
+  in logs/responses.
+- jsdom: `panel_smoke` +11 lifecycle checks (render, warnings, validation,
+  PUT/POST recorded, confirm dialog content) — all pass.
+- Full suite: `pytest -q` **381 passed**; Ruff/format; strict mypy; all five
+  harnesses; startup smoke PASS; `node --check` PASS.
+
+**Not run (honest gaps):** live `POST /addons/self/stop` against a real Home
+Assistant Supervisor — **blocked** (no HA OS in this sandbox); mocked and
+process-level results must not be read as a live stop claim. Automatic-shutdown
+inactivity expiry was verified at unit level (injected clock) and settings
+validation at API level; the 5-minute minimum means no live full-timer run.
+
 ## 2026-10-24 — Prompt #2 Phase 2: startup/lifecycle/health audit
 
 - Re-audited Dockerfile/base image/S6 `run.sh`/AppArmor/signals/shutdown

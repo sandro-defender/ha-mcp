@@ -95,6 +95,7 @@ async def run(runtime: Runtime, admin_app: Any, agent_app: Any) -> None:
     servers = [admin_server, agent_server]
     tasks = [asyncio.create_task(server.serve(), name=f"server-{server.config.port}") for server in servers]
     maintenance = asyncio.create_task(runtime.maintenance_loop(), name="maintenance")
+    runtime.lifecycle.start_background()
 
     stop = asyncio.Event()
     listener_failed = False
@@ -120,6 +121,7 @@ async def run(runtime: Runtime, admin_app: Any, agent_app: Any) -> None:
     finally:
         for server in servers:
             server.should_exit = True
+        runtime.lifecycle.cancel_background()
         maintenance.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await maintenance

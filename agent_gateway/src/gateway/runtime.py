@@ -22,6 +22,7 @@ from .connectors.proxmox import ProxmoxClient
 from .connectors.ssh import scan_host_key
 from .errors import GatewayError, NotFoundError, ValidationFailure
 from .journal.service import JournalService
+from .lifecycle import LifecycleService
 from .operations import OperationService
 from .policy.engine import PolicyService
 from .policy.models import PolicyRequest
@@ -226,6 +227,12 @@ class Runtime:
             tools=self.tools,
             settings=settings,
         )
+        self.lifecycle = LifecycleService(
+            settings=settings,
+            settings_store=self.settings_store,
+            audit=self.audit,
+            agent_access=self.agent_access,
+        )
         self.startup_session_policy: dict[str, Any] | None = None
         self._initialized = False
 
@@ -242,6 +249,14 @@ class Runtime:
             "INSERT OR IGNORE INTO settings(key, value, updated_at) VALUES(?,?,?)",
             ("approval_ttl_seconds", str(self.settings.approval_ttl_seconds), ""),
         )
+        # Seed automatic-shutdown defaults from the add-on options until an
+        # administrator changes them in the panel (panel edits win afterwards).
+        if not self.settings_store.get_bool("auto_shutdown_customized"):
+            self.settings_store.set("auto_shutdown_enabled", bool(self.settings.auto_shutdown_enabled))
+            self.settings_store.set(
+                "auto_shutdown_timeout_minutes",
+                int(self.settings.auto_shutdown_timeout_minutes),
+            )
         self.releases.record_startup_version()
         self._ensure_known_hosts_file()
         self.audit.purge_old(self.settings_store.get_int("audit_retention_days"))
@@ -270,6 +285,7 @@ class Runtime:
         )
 
     def shutdown(self) -> None:
+        self.lifecycle.cancel_background()
         self.vault.lock()
         self.db.close()
         logger.info("gateway stopped")
@@ -591,7 +607,8 @@ class Runtime:
 
         vault_status = self.vault.status()
         emergency = self.settings_store.get_bool("emergency_disabled")
-        ready = db_ok and not emergency
+        shutting_down = self.lifecycle.blocks_agents
+        ready = db_ok and not emergency and not shutting_down
         return {
             "ready": ready,
             "status": "ready" if ready else "degraded",
@@ -605,13 +622,17 @@ class Runtime:
                     "auto_unlock": vault_status["auto_unlock_enabled"],
                 },
                 "agent_listener": {
-                    "enabled": not emergency,
+                    "enabled": not emergency and not shutting_down,
                     "port": self.settings.agent_port,
                     "tls_enabled": self.settings.tls_enabled,
                 },
                 "ingress_listener": {
                     "port": self.settings.ingress_port,
                     "require_ingress_user": self.settings.require_ingress_user,
+                },
+                "lifecycle": {
+                    "state": self.lifecycle.state,
+                    "auto_shutdown_enabled": self.lifecycle.enabled,
                 },
             },
         }

@@ -37,6 +37,8 @@ class Settings:
     mcp_max_request_bytes: int = 2_097_152
     audit_retention_days: int = 30
     approval_ttl_seconds: int = 600
+    auto_shutdown_enabled: bool = True
+    auto_shutdown_timeout_minutes: int = 30
     max_operation_timeout_seconds: int = 120
     max_output_bytes: int = 262_144
     hostname: str = "agent-gateway"
@@ -164,6 +166,11 @@ def load_settings(
     if not 30 <= approval_ttl <= 3600:
         raise ConfigError("approval_ttl_seconds must be between 30 and 3600")
 
+    auto_shutdown_enabled = _parse_bool(options.get("auto_shutdown_enabled", True), True)
+    auto_shutdown_timeout = int(options.get("auto_shutdown_timeout_minutes", 30))
+    if not 5 <= auto_shutdown_timeout <= 1440:
+        raise ConfigError("auto_shutdown_timeout_minutes must be between 5 and 1440")
+
     data_dir_path = resolved_data_dir
     if not data_dir_path.exists():
         try:
@@ -185,5 +192,7 @@ def load_settings(
         require_ingress_user=require_ingress_user,
         audit_retention_days=retention,
         approval_ttl_seconds=approval_ttl,
+        auto_shutdown_enabled=auto_shutdown_enabled,
+        auto_shutdown_timeout_minutes=auto_shutdown_timeout,
         hostname=environ.get("HAG_HOSTNAME", "agent-gateway"),
     )

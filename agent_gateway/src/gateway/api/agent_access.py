@@ -18,7 +18,7 @@ import httpx
 from fastapi import APIRouter, Depends, Query, Request
 
 from ..auth.agents import SESSION_MAX_TTL_SECONDS, SESSION_MIN_TTL_SECONDS
-from ..errors import RateLimited, ValidationFailure
+from ..errors import RateLimited, ShuttingDown, ValidationFailure
 from ..runtime import Runtime
 from .deps import get_admin, get_runtime
 from .middleware import AdminPrincipal, client_ip
@@ -83,6 +83,9 @@ def issue_session(
     runtime: Runtime = Depends(get_runtime),
     admin: AdminPrincipal = Depends(get_admin),
 ) -> dict[str, Any]:
+    # No new agent sessions while the add-on is shutting down.
+    if runtime.lifecycle.blocks_agents:
+        raise ShuttingDown()
     peer = client_ip(request.scope)
     allowed, retry_after = runtime.rate_limiter.check_and_record(
         f"sessionissue:{admin.user_id}:{peer}", limit=10, window_seconds=60

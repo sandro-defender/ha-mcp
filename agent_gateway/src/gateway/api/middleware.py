@@ -16,6 +16,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from ..audit.service import AuditService
 from ..auth.agents import AgentPrincipal, AgentService
 from ..auth.rate_limit import SlidingWindowLimiter
+from ..lifecycle import LifecycleService
 from ..settings import Settings
 from ..storage.db import SettingsStore
 
@@ -184,9 +185,10 @@ class AdminGateMiddleware:
     itself; the peer address check is what makes those headers trustworthy.
     """
 
-    def __init__(self, app: ASGIApp, settings: Settings) -> None:
+    def __init__(self, app: ASGIApp, settings: Settings, lifecycle: LifecycleService | None = None) -> None:
         self.app = app
         self.settings = settings
+        self.lifecycle = lifecycle
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -267,6 +269,11 @@ class AdminGateMiddleware:
                 )
                 return
 
+        # Authenticated Ingress traffic counts as legitimate administrative
+        # activity for the inactivity timer (documented in lifecycle.py);
+        # rejected peers and failed CSRF/origin checks never get here.
+        if self.lifecycle is not None:
+            self.lifecycle.record_activity("admin")
         await self.app(scope, receive, send)
 
 
@@ -329,6 +336,7 @@ class AgentAuthMiddleware:
         settings: Settings,
         limiter: SlidingWindowLimiter,
         audit: AuditService | None = None,
+        lifecycle: LifecycleService | None = None,
     ) -> None:
         self.app = app
         self.agents = agents
@@ -336,6 +344,7 @@ class AgentAuthMiddleware:
         self.settings = settings
         self.limiter = limiter
         self.audit = audit
+        self.lifecycle = lifecycle
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -344,6 +353,23 @@ class AgentAuthMiddleware:
         path = scope.get("path", "")
         if path in {"/healthz", "/readyz"}:
             await self.app(scope, receive, send)
+            return
+
+        # Shutdown gate: reject every new agent session, redeem, REST call,
+        # and MCP request while the add-on is stopping.  Health/readiness stay
+        # reachable so the watchdog keeps seeing a live process.
+        if self.lifecycle is not None and self.lifecycle.blocks_agents:
+            await _send_json(
+                send,
+                503,
+                {
+                    "error": {
+                        "code": "shutting_down",
+                        "message": "the gateway is shutting down",
+                    }
+                },
+                [(b"retry-after", b"60")],
+            )
             return
 
         query = parse_qs(scope.get("query_string", b"").decode("latin-1"), keep_blank_values=True)
@@ -425,8 +451,18 @@ class AgentAuthMiddleware:
             )
             return
 
-        _state(scope)["agent"] = principal
-        await self.app(scope, receive, send)
+        # A valid, non-expired, non-revoked credential that passed every gate
+        # is legitimate agent activity for the inactivity timer; invalid or
+        # expired tokens were rejected above and never reset it.
+        if self.lifecycle is not None:
+            self.lifecycle.record_activity("agent")
+            self.lifecycle.begin_agent_request()
+        try:
+            _state(scope)["agent"] = principal
+            await self.app(scope, receive, send)
+        finally:
+            if self.lifecycle is not None:
+                self.lifecycle.end_agent_request()
 
     async def _auth_failure(self, send: Send, scope: Scope, reason: str) -> None:
         peer = client_ip(scope)
