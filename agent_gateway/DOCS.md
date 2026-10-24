@@ -76,6 +76,7 @@ approval_ttl_seconds: 600
    - Once saved, secret values are never returned by any API or displayed again in the UI.
 3. **Create & Diagnose Connections (`Connections` tab)**:
    - Create your Home Assistant, Proxmox VE, or non-root SSH connection profile.
+   - For SSH, enter the **SSH username** in this connection form. It is deliberately separate from the private key stored in Credentials.
    - For SSH targets, click **Scan Host Key** and verify the fingerprint before clicking **Trust Key**.
    - Click **Run Diagnostics** to verify transport, TLS/SSH trust, authentication, and API readiness.
 4. **Create an Agent & Policy (`Agents` & `Permissions` tabs)**:
@@ -120,20 +121,23 @@ Invoke-RestMethod -Method Post -Uri "http://homeassistant.local:8098/mcp" -Heade
 For coding agents that should only get **short-lived, narrowly scoped** access,
 do not create a persistent agent identity. Use **Agent Access** instead:
 
-1. Set **Agent API base URL** to the address the agent host can reach, e.g.
-   `http://homeassistant.local:8098` (the agent listener, not the Ingress
-   address), and keep or change the restart policy.
-2. Pick the connections, scopes (`ha:*`, `proxmox:*`, `ssh:*`, `journal:*`) and
-   operation classes (`read` is mandatory, `write` optional, `destructive` is
-   never allowed), choose a lifetime, and generate. Global `audit:read` is
-   deliberately unavailable to temporary sessions; it belongs only to persistent
-   administrator-managed identities.
-3. Give the agent the single-use handoff link (valid for 15 minutes). The agent
-   opens `http://<host>:8098/agent#code=…`; the page shows the session token
-   **once**, together with the REST base URL, MCP endpoint, expiry, and scope.
+1. Use **Connect an AI agent** in **Agent Access**. Check the suggested agent
+   address (the agent listener, not Ingress), choose connections, **Read only**
+   or **Read and control**, and a lifetime. The guided form derives the scopes
+   automatically; the advanced individual-scope form is optional.
+2. Click **Create access and AI prompt**. Review and copy the prompt only into
+   the intended agent. It contains the single-use handoff link (valid for 15
+   minutes), MCP details, verification steps, and continuation instructions;
+   nothing is sent automatically and no upstream or redeemed bearer credential
+   is included.
+3. The agent opens `http://<host>:8098/agent#code=…`; the page shows the session
+   token **once**, together with the REST base URL, MCP endpoint, expiry, and
+   scope. A manual handoff-link flow remains available.
 4. Revoke the session when the agent is done. Revoking stops the token
    immediately and expires its pending approvals. **Revoke all** does this for
-   every temporary session and requires typing `REVOKE ALL`.
+   every temporary session and requires typing `REVOKE ALL`. Global `audit:read`
+   remains unavailable to temporary sessions; it belongs only to persistent
+   administrator-managed identities.
 
 Upstream Home Assistant, Proxmox, and SSH credentials are never shown on
 either page and are never rotated by session revocation. With

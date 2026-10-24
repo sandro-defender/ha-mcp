@@ -113,14 +113,24 @@ Network: `8098/tcp` is **`null` (not published)** by default; expose it on a tru
 1. **Vault** (`Credentials`): create a master password (≥12 characters, Argon2id `64 MiB, t=3, p=2`, AES-256-GCM). Export an encrypted backup and store it separately from the password.
 2. **Credentials**: add `home_assistant_token`, `proxmox_token` (`user@realm!tokenname` shape validated), `ssh_private_key`, or `ca_certificate`. Secrets are masked after saving.
 3. **Connections** (`Connections`): create a profile, **Scan Host Key** for SSH, **Test** — the response includes `latency_ms`, step breakdown (`configuration → credential → transport → authentication → verification`), `error_category`, `remediation`, and `last_ok_at`.
-4. **Agents & Permissions**: create an identity per client (`windows-claude-desktop`), copy the `hag_…` token once, assign scopes and policy rules, and dry-run with the **Policy Simulator**.
-5. **Agent listener**: expose `8098/tcp` on the host for your LAN/VPN only if needed. Never port-forward `8098` or `8099` to the public internet.
+4. **Agent Access (recommended)**: use **Connect an AI agent** for guided temporary access and a ready-to-paste AI setup prompt. For persistent access instead, use **Agents & Permissions** to create an identity, copy its `hag_…` token once, and configure policy rules.
+5. **Agent listener**: expose `8098/tcp` on the host for your LAN/VPN only if needed. Never port-forward `8098` or `8099` to the public internet. For SSH, the private key is stored in **Credentials**, while the **SSH username** is entered separately in the SSH **Connection**.
 
 Upgrade, backup, and recovery are documented in [`docs/VAULT_RECOVERY.md`](docs/VAULT_RECOVERY.md) and [`agent_gateway/DOCS.md`](agent_gateway/DOCS.md). The SQLite schema migrates automatically through v4 without discarding existing records (`v2` adds connection/agent diagnostic fields, `v3` adds Project Journal tables, and `v4` adds temporary-agent access). Legacy v0 vaults are migrated on unlock and re-wrapped so they can be unlocked again after restart.
 
 ---
 
 ## Connecting an external agent (Windows, macOS, Linux)
+
+### Guided UI setup (recommended)
+
+1. Complete **Credentials → Connections → Test** for each upstream system.
+2. Publish the add-on's **Agent API** on port `8098` under **Configuration → Network**, on a trusted LAN/VPN only.
+3. Open **Agent Access → Connect an AI agent**. Choose connections, **Read only** or **Read and control**, a lifetime, and the address the agent computer can reach. The UI suggests an address from the current Home Assistant hostname and derives the scopes automatically.
+4. Click **Create access and AI prompt**, review the prompt, and paste it only into the intended AI agent. It contains a short-lived, single-use handoff link—not an upstream credential or redeemed bearer token. Nothing is sent to an AI automatically.
+5. The agent redeems the link, receives its token once on the agent page, configures MCP, and verifies health/tools before continuing. Writes still require your approval. Advanced individual-scope and settings forms remain available but are not required.
+
+The guided UI fills in the following technical values for you; they are documented here as a fallback.
 
 ### MCP Streamable HTTP
 
@@ -211,7 +221,7 @@ python3 -m venv .venv
 .venv/bin/ruff check agent_gateway/src agent_gateway/tests
 .venv/bin/ruff format --check agent_gateway/src agent_gateway/tests
 (cd agent_gateway && ../.venv/bin/mypy src)
-.venv/bin/pytest -q                 # 353 tests
+.venv/bin/pytest -q                 # 356 tests
 node --check agent_gateway/src/gateway/ui/static/app.js
 
 # run the gateway locally (development only)

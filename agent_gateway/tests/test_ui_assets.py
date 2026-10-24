@@ -358,7 +358,10 @@ def test_agent_access_ui_never_renders_upstream_secrets_or_session_tokens() -> N
     # The admin page receives no session token (it is delivered on /agent) and
     # no upstream credential ever reaches this page.
     assert "showToken(" not in view
-    assert "password" not in view.lower()
+    assert not re.search(r"\b(?:result|session|handoff)\.token(?![\w])", view)
+    # URL.password is inspected only to reject userinfo in the guided base URL;
+    # it is never read from a credential or rendered into the handoff.
+    assert "parsed.password" in view
     assert "credential_value" not in view
     assert "secret" not in view.lower() or "upstream credentials are not" in view.lower()
     assert "token_prefix" in view
@@ -370,6 +373,41 @@ def test_agent_access_ui_states_that_credentials_stay_upstream() -> None:
     assert "Upstream credentials are not changed" in view or "never rotates" in view
     assert "single-use" in view
     assert "Destructive operations can never be granted" in view
+
+
+def test_guided_agent_access_builds_permissions_and_copyable_prompt() -> None:
+    view = _agent_access_view_source()
+    for fragment in (
+        'id="guide-form"',
+        'id="guide-connections"',
+        'id="guide-mode"',
+        "Read only (recommended)",
+        "Read and control",
+        "guidedAccessScopes(types, allowWrite)",
+        'add("ha:read")',
+        'add("ha:write")',
+        'add("proxmox:read")',
+        'add("ssh:read")',
+        'add("ssh:write")',
+        "Create access and AI prompt",
+        'id="agent-setup-prompt"',
+        'id="handoff-copy-prompt"',
+        "continue as my infrastructure assistant",
+        "Nothing is sent to an AI automatically",
+        'id="access-form"',  # advanced individual-scope flow remains
+    ):
+        assert fragment in view
+    # The one-time response is shown before a route refresh can fail.
+    assert view.count("showHandoff(result);") == 2
+
+
+def test_ssh_username_is_explicit_and_separate_from_the_stored_key() -> None:
+    assert '<label for="ssh-username">SSH username</label>' in JS
+    assert 'autocomplete="username"' in JS
+    assert "Enter the SSH username for this host." in JS
+    assert "The SSH username above belongs to this connection, not to the key." in JS
+    assert 'id="cred-key-location-hint"' in JS
+    assert "The key and username are stored separately" in JS
 
 
 def test_agent_handoff_page_is_offline_and_storage_free() -> None:
