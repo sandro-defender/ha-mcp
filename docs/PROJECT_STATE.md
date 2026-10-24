@@ -1,127 +1,109 @@
 # Project state — Home Assistant Agent Gateway
 
-> Concise current state for the next agent/admin session. Update this file at
-> the end of every work session (see `AGENTS.md` §2). Detailed history:
-> `docs/WORKLOG.md`. Prioritized remaining work: `docs/NEXT_STEPS.md`.
-> Runtime records: the gateway Project Journal (`docs/JOURNAL.md`).
+> Concise current state for the next agent/admin session. Detailed history:
+> `docs/WORKLOG.md`; remaining work: `docs/NEXT_STEPS.md`; requirement-level
+> evidence: `docs/AUDIT_CHECKLIST.md`. Runtime records: the gateway Project
+> Journal (`docs/JOURNAL.md`).
 
-- **Last updated:** 2026-10-23 by Arena coding agent (session
-  `arena/91b312ba-ha-mcp`)
-- **Branch:** `arena/91b312ba-ha-mcp` · 0.4.1 fix for `/api/admin/status`
-  `IndexError: 4` inside `/app/src/gateway`, reverse-proxied Ingress `Origin`
-  check, truthful 5xx boot error UI, and build/smoke status gates.
-- **Version:** 0.4.1 (synced across config/pyproject/Dockerfile/`__init__`/
-  both CHANGELOGs)
+- **Last updated:** 2026-10-24 by Arena coding agent (session
+  `arena/a2524cd0-ha-mcp`)
+- **Branch:** `arena/a2524cd0-ha-mcp`, based on `25c5c6b` / 0.4.1
+- **Version:** 0.4.2, synchronized in config, pyproject, Dockerfile, package
+  version, and both byte-identical changelogs
+- **PR/release:** no suitable open PR or existing tag/release was found. One PR
+  is to be opened from this branch; merge/release remains gated on required CI.
 
 ## Purpose and architecture
 
-Home Assistant OS add-on that lets external AI agents operate Home
-Assistant, Proxmox VE, and restricted SSH targets through one
-deny-by-default policy engine without receiving credentials: AES-256-GCM +
-Argon2id vault, per-agent hashed `hag_…` tokens and scopes, single-use
-parameter-bound approvals, redacted SQLite audit, two listeners (Ingress
-management `:8099`, agent REST+MCP `:8098`) sharing one `Runtime`,
-`PolicyService`, and audit path. 0.3.0 adds the **Project Journal**
-(schema v3 `journal_*` tables, `gateway/journal/`, REST + MCP `journal.*`
-tools via the central policy engine, 11th panel section) so agents can
-persist sessions/tasks/decisions/issues/test evidence and generate
-next-session handoff prompts. 0.4.0 adds the temporary agent access broker
-(schema v4 `session_handoffs`, `/agent` handoff page, 12th panel section,
-restart revocation) and the S6 AppArmor startup fix; see
-`docs/AGENT_ACCESS.md` and `docs/STARTUP_TROUBLESHOOTING.md`. Full detail:
-`README.md`, `docs/JOURNAL.md`, `docs/SECURITY.md`.
+Home Assistant OS add-on that lets external AI agents operate Home Assistant,
+Proxmox VE, and restricted SSH targets through one deny-by-default policy engine
+without receiving upstream credentials. It includes an AES-256-GCM + Argon2id
+vault, scoped digest-only bearer tokens, temporary agent sessions with
+single-use handoffs, parameter-bound approvals, redacted SQLite audit and
+Project Journal data, and two listeners: Ingress management `:8099` and agent
+REST+MCP `:8098`, sharing one `Runtime`, `PolicyService`, and audit path.
 
-## Completed and verified (this branch)
+## Current audit result
 
-| Item | Evidence | Level |
+The P0 changelog-dismissal defect and eleven additional reliability/security
+defects were reproduced or directly demonstrated, fixed, and covered by
+regressions:
+
+1. stale post-update notice after successful acknowledgement;
+2. nested and broad Home Assistant service targets escaping entity policy;
+3. in-flight scope removal and newly required approval not stopping execution;
+4. Proxmox LXC status evaluated as a QEMU `vms` target;
+5. temporary sessions eligible for global `audit:read`;
+6. temporary connection catalog exposing unauthorized connection metadata;
+7. unbounded buffering of discarded upstream HTTP error bodies;
+8. SSH short chunked reads mistaken for EOF;
+9. SQLite WAL/SHM sidecars created as `0644`;
+10. v0 vault migration retaining an incompatible DEK wrapper;
+11. unexpected listener exit returning success; and
+12. obsolete dotted scope IDs in the agent form's no-status fallback.
+
+The exact file/test evidence and all PASS/FIXED/PARTIAL/MISSING/BLOCKED/NOT
+TESTED classifications are in `docs/AUDIT_CHECKLIST.md`.
+
+## Verified in this session
+
+| Check | Result | Evidence level |
 | --- | --- | --- |
-| Baseline before changes | `pytest -q` → 211 passed on `6857797` | automated_tests |
-| Journal schema v3 + v2→v3 migration preserving records; newer-schema rejection | `tests/test_journal.py` | automated_tests |
-| Persistence across restarts | pytest (new `Runtime` on same data dir + raw sqlite read) **and** real process restart of a socket-level dev instance (`/tmp/gw-journal-demo`, schema_version 3, rows intact) | automated_tests |
-| Task lifecycle: transitions, completion-requires-evidence, dependency blocking + cycle rejection | pytest + socket E2E (`409`/`422` paths) | automated_tests |
-| Sessions, idempotent creates (no duplicates on retry) | pytest + socket E2E | automated_tests |
-| Claim vs verified separation; timeline categories incl. failed/blocked/unverified; search/commit filter/pagination | pytest | automated_tests |
-| Secret redaction pre-storage (password/Bearer/PEM probes absent from DB rows) | pytest + socket E2E + direct sqlite check (0 leaked rows) | automated_tests |
-| Authorization: scope, policy deny-by-default, `require_approval` fail-closed, rate limit, cross-agent ownership, admin override, audit of writes/denials | pytest | automated_tests |
-| Handoff generated from real records (focus task, acceptance criteria, blocked work, failed-approach lesson, test evidence, untrusted-data warning), persisted + idempotent | pytest + socket E2E (2 927-char prompt, re-fetched after restart) | automated_tests |
-| MCP journal tools: list gating by scope, call without `connection_id`, REST/MCP same records (`source=mcp`), policy denial over MCP | pytest (in-process ASGI MCP session) | automated_tests |
-| Panel Project Journal section (state, next steps, timeline, handoff generate → editable → copy, empty/denied states) | `test_ui_assets.py` journal cases + jsdom `tools/ui-smoke` (all checks ok incl. 5 journal checks) | automated_tests |
-| Full regression | `pytest -q` → **253 passed**; `ruff check`, `ruff format --check`, `mypy --strict` (52 files), `node --check app.js` all clean | automated_tests |
-
-Exact commands and environment: see `docs/WORKLOG.md` (2026-10-22 entry).
+| Unmodified baseline | 329 passed | automated_tests |
+| Final Python suite at this checkpoint | **354 passed in 22.89s** | automated_tests |
+| Ruff lint/format | clean; 75 files formatted | automated_tests |
+| Strict mypy (`mypy src`) | clean; 55 source files | automated_tests |
+| UI jsdom | all five harnesses passed, including 14 changelog-dismissal checks; wired into PR CI | automated_tests, not a real browser |
+| Process startup smoke | two start/readiness/SIGTERM/restart cycles passed | automated process test |
+| Occupied-port startup probe | nonzero exit (3), runtime shutdown retained | automated process test |
+| Python wheel | built successfully with `pip wheel --no-deps --no-build-isolation` | build test |
+| Temporary restart behavior | old token 401; epoch/revocation persisted; synthetic upstream credential still decrypted | automated_tests |
 
 ## In progress / blocked
 
-- **Live deployment verification — blocked (infrastructure).** No Home
-  Assistant OS/Supervisor, Proxmox, SSH lab, or Docker daemon exists in the
-  agent sandbox. The 0.4.0 S6 AppArmor read+execute fix, the schema-v3→v4
-  migration and the agent access broker are verified by source-level checks,
-  automated tests and a process-level smoke run only — **not** on a real
-  install. Must be confirmed on the user's HA OS before making
-  production-readiness claims (`docs/STARTUP_TROUBLESHOOTING.md`,
-  `docs/AGENT_ACCESS.md`).
-- Nothing else is half-finished on this branch; 0.4.0 is committed and the PR
-  is open.
-
-## Known bugs and unresolved security issues
-
-- No journal-specific bugs found by the test suite. Known systemic items
-  (pre-existing, unchanged): no third-party security audit/pen test/fuzzing;
-  no live HA/Proxmox/SSH integration tests; the container startup smoke
-  (`tools/startup-smoke/docker-smoke.sh`) runs in CI's `image` job but has not
-  been executed in this sandbox (no Docker daemon); HA WebSocket intentionally
-  absent.
-- Journal limitations (documented in `docs/JOURNAL.md`): verification levels
-  are self-reported (gateway records claims + metadata; it does not run the
-  tests); any `journal:read` agent sees the whole project journal; redaction
-  is pattern-based; merged timeline serves the newest 200 records per type
-  (per-type lists paginate fully); one seeded `default` project
-  (multi-project endpoints not exposed); `journal.list_test_runs` /
-  `journal.list_sessions` are REST-only over MCP (timeline covers runs).
+- **PR CI and container evidence:** pending at this checkpoint. Local Docker
+  and AppArmor tools are unavailable, so no local container/AppArmor success is
+  claimed. The GitHub Actions `image` job is the required build/startup gate.
+- **Live deployment and integrations:** no HA OS/Supervisor, live Home
+  Assistant/Proxmox/SSH target, third-party MCP client, or real browser was
+  available. These remain `blocked_infrastructure`, not PASS.
+- **aarch64:** declared in metadata but not built in this session; current CI
+  builds amd64 only.
+- **Independent security review/fuzzing:** not performed.
 
 ## Important decisions
 
-1. **Journal authorization via `journal.*` pseudo-tools in the central
-   policy engine** (`connection_id=None`, read-risk evaluation). Rationale:
-   one authorization path, per-agent rules/templates/rate limits for free.
-   Journal writes execute nothing, so they are not approval-gated; a rule
-   with `require_approval: true` *denies* (fail closed) instead of being
-   ignored. Alternatives considered: scope-only checks (rejected — bypasses
-   the policy engine the spec mandates) and full `OperationService` tool
-   specs (rejected — connector tools require vault-backed connections).
-2. **Append-only history.** No edit/delete routes for records; only
-   validated status transitions, owner-scoped (admins override). Corrections
-   are new entries. Project state is the one shared mutable document,
-   protected by optimistic-concurrency `revision`.
-3. **Completion requires evidence.** `completed` demands
-   `automated_tests`/`integration_verified`; the server rejects
-   claim-only completion.
-4. **MCP journal tools dispatch outside `OperationService`** but through the
-   identical `authorize_agent_journal` + `JournalService`, keeping REST/MCP
-   parity without faking a connection.
+- **Fail closed for unknown targets.** Home Assistant area/device/floor/label
+  or untargeted service calls use a broad-target sentinel. Specific entity
+  allow rules do not match it; entity deny constraints still veto it.
+- **Fresh principal at execution.** Scope, temporary-session constraints,
+  policy, limits, and tool context all use the freshly loaded principal. If a
+  read rule gains `require_approval` in flight, the operation fails and must be
+  retried through the normal approval flow.
+- **Temporary sessions do not get global audit.** `audit:read` remains available
+  to persistent administrator-managed identities only. Temporary discovery is
+  filtered to authorized connection IDs without changing persistent behavior.
+- **Changelog acknowledgement is installation-scoped.** It is shared by the
+  add-on's administrators, hides only the acknowledged version, and leaves
+  release history available.
+- **No architecture redesign.** Existing UI polish, API contracts, vault
+  format version, policy model, and connector architecture were preserved.
 
-## Failed approaches (this session)
+## Failed approaches / lessons
 
-- **Parallel edits to the same file raced** in the agent tooling: of several
-  batched edits to `db.py`/`apps.py`/`service.py`, only the last took effect
-  (55 test failures, missing imports/schema bump). Lesson: serialize
-  same-file edits and grep-verify after every batch; use single asserted
-  patch scripts for multi-site changes. Recovered with zero data loss
-  (also recorded as a failed-approach entry in the E2E dev journal).
-- `mypy --strict` rejected `list[str]` assigned to an annotated
-  `list[str | None]` (invariance) in timeline level filtering; fixed by
-  building the list via `append`/`extend`.
-
-## Environment limitations (test context)
-
-Sandbox: Python 3.11.2 venv, Node 22, no Docker daemon, no Supervisor, no
-live HA/Proxmox/SSH targets, no real browser (jsdom only), outbound network
-restricted to package registries/GitHub. Integration-level claims above are
-therefore `automated_tests`, never `integration_verified`.
+- The first jsdom acknowledgement reproduction reused the same API object
+  cached by the panel and therefore produced a false pass. Fresh deep-copy API
+  responses reproduced the stale-state bug and are now permanent harness
+  behavior.
+- Treating a failed acknowledge request as already handled by `guarded()` was
+  insufficient because it rethrows; both dismissal click handlers now consume
+  the terminal rejection after the toast.
+- The initial wheel command failed because the development venv lacked the
+  `wheel` command (`invalid command 'bdist_wheel'`). Installing the build tool
+  and rerunning succeeded; this was an environment issue, not a package defect.
 
 ## Next tasks
 
-See `docs/NEXT_STEPS.md` (prioritized, with dependencies and acceptance
-criteria). Highest priority: install 0.4.0 on real HA OS, verify the S6
-read+execute startup fix, confirm the v3→v4 migration on the existing `/data`,
-and exercise one Agent Access session end to end.
+See `docs/NEXT_STEPS.md`. Immediate sequence: final secret/diff review, one PR,
+required CI (especially container startup), then merge/release only if green.
+Live HA OS and lab verification remain separate follow-up work.

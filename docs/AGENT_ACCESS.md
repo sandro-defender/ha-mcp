@@ -1,4 +1,4 @@
-# Temporary agent access (0.4.0)
+# Temporary agent access (introduced in 0.4.0; hardened in 0.4.2)
 
 This document describes the broker that issues short-lived, tightly scoped
 credentials to coding agents. It explains the two credential layers, the
@@ -77,8 +77,9 @@ Temporary sessions carry the epoch they were created in; a mismatch makes
 authentication fail even if a row were somehow left enabled. This means a
 restart can never resurrect a stale token, and no upstream credential is
 rotated, deleted, or re-displayed. Administrator-managed (persistent) agent
-identities are unaffected. With the policy off, temporary sessions survive a
-restart, which is a deliberate administrator choice.
+identities are unaffected. With the policy off, already-redeemed temporary sessions survive a restart,
+which is a deliberate administrator choice. Unredeemed handoff codes are still
+purged at startup; issue a new session if a pending link was lost.
 
 The Agent Access page shows the result of the last startup
 (`policy`, `revoked`, `session_epoch`).
@@ -132,12 +133,15 @@ contains only the gateway token and URL. It never contains upstream secrets.
 A temporary session is **narrower** than a persistent agent identity:
 
 - `allowed_connections` — exactly the connections chosen at issuance. A call
-  against any other connection is denied before the connector runs.
+  against any other connection is denied before the connector runs, and
+  `GET /api/v1/connections` hides unauthorized connection metadata.
 - `operation_classes` — `read` is mandatory; `write` is optional; `destructive`
   **cannot** be granted (the request is rejected).
 - `scopes` — must match the selected connection types (`ha:*` requires a Home
   Assistant connection, `proxmox:*` a Proxmox connection, `ssh:*` an SSH
-  connection). Journal scopes are connectionless.
+  connection). Journal scopes are connectionless. Global `audit:read` cannot be
+  issued to a temporary session; it is reserved for persistent
+  administrator-managed identities and enforced again at the audit endpoint.
 - **Policy** — a server-generated document containing only the tools that the
   chosen scopes/classes need. Write rules carry `require_approval: true` plus a
   10 requests/minute limit. The document is stored in the existing `policies`
@@ -162,7 +166,7 @@ scopes, or connection ids in a request body are never trusted; a mismatching
 | --- | --- |
 | Token theft / replay | 256-bit token, digest-only storage, `no-store` responses, no URLs/query/history, immediate revocation, expiry |
 | Revoked or stale token | `enabled=0` + digest overwrite + epoch check; startup revocation persisted |
-| Cross-session access | Per-session connection allowlist and policy; IDs are server-derived |
+| Cross-session access | Per-session connection allowlist, filtered connection catalog, and policy; IDs are server-derived |
 | Privilege escalation via parameters | Per-tool pydantic schemas, `additionalProperties: false`, target constraints, hard-blocked HA domains, approval hash binds parameters |
 | Upstream secret discovery | Secrets stay in the vault; tool results are redacted; agent API never returns credentials; tests grep responses for sentinel secrets |
 | Bypassing the gateway | Agents have no route to HA/Proxmox/SSH; the gateway is the only holder of upstream credentials |
@@ -245,20 +249,22 @@ a token after it has been consumed.
 
 ## 8. Verification status
 
-Run in this environment:
+Current 0.4.2 audit evidence:
 
-- full pytest suite (323 tests at the time of writing), including 33 new
-  broker/page tests and the static startup contract,
-- `ruff check`, `ruff format --check`, `mypy src` (strict),
-- `tools/startup-smoke/smoke.py` (real `run.sh`, both listeners, Ingress gate,
-  SIGTERM, restart),
-- `node --check` on the management panel and the agent page.
+- full pytest suite (**354 passed**), including issuance, single-use and
+  concurrent redemption, scope/connection confinement, filtered discovery,
+  global-audit denial, expiry, revocation, stale-epoch rejection, and restart
+  behavior with successful upstream-vault decryption afterward;
+- `ruff check`, `ruff format --check`, and strict `mypy src`;
+- process-level `tools/startup-smoke/smoke.py` (both listeners, health,
+  readiness, two SIGTERM/restart cycles);
+- five jsdom harnesses, including Agent Access, handoff, and changelog states;
+- a Python wheel build.
 
-Not run here (documented as unverified):
+Not run locally:
 
-- Docker image build and container boot (no Docker daemon, no registry access),
-- real AppArmor profile load/enforcement,
+- Docker image build/boot or real AppArmor enforcement (no local daemon/tools;
+  the GitHub Actions image job is the required gate),
 - Home Assistant OS / Supervisor installation,
 - live Home Assistant, Proxmox, or SSH calls,
-- a real browser session against `/agent` (no browser in this environment; the
-  markup/JS are covered statically and by the page tests).
+- a third-party MCP client or a real browser session (jsdom only).

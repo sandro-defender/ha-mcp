@@ -12,6 +12,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 UI_DIR = Path(__file__).resolve().parents[1] / "src" / "gateway" / "ui" / "static"
 CSS = (UI_DIR / "styles.css").read_text(encoding="utf-8")
 HTML = (UI_DIR / "index.html").read_text(encoding="utf-8")
@@ -271,6 +273,41 @@ def test_journal_ui_contains_no_hardcoded_example_records() -> None:
     for fake in ("Lorem", "Example task", "Sample entry", "mock entry", "seeded"):
         assert fake not in view
     assert "items.map(journalTimelineItem)" in view
+
+
+def test_agent_scope_fallback_uses_valid_backend_ids() -> None:
+    """The no-status fallback must not submit obsolete dotted scope names."""
+
+    for scope in ("ha:read", "ha:write", "proxmox:read", "ssh:read", "ssh:write"):
+        assert f'id:"{scope}"' in JS
+    for obsolete in ("ha.read", "ha.write", "proxmox.read", "ssh.read", "ssh.execute"):
+        assert f'id:"{obsolete}"' not in JS
+
+
+# ------------------------------------------------------- release notice dismissal
+
+
+def _dashboard_view_source() -> str:
+    start = JS.index("async function viewDashboard()")
+    end = JS.index("async function toggleAgents()")
+    return JS[start:end]
+
+
+def _updates_view_source() -> str:
+    start = JS.index("async function viewUpdates()")
+    end = JS.index("async function saveLimits(")
+    return JS[start:end]
+
+
+@pytest.mark.parametrize("view_source", [_dashboard_view_source(), _updates_view_source()])
+def test_release_notice_dismissal_refreshes_cached_status(view_source: str) -> None:
+    """Regression: acknowledging without refreshing state.status left the banner visible."""
+
+    assert 'api("releases/acknowledge"' in view_source
+    assert "await refreshStatus();" in view_source
+    assert "withBusy(event.currentTarget" in view_source
+    # guarded() reports failures; the click handler must consume the rethrow.
+    assert ").catch(function ()" in view_source
 
 
 # ------------------------------------------------------- temporary agent access

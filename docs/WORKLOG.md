@@ -5,6 +5,88 @@
 > Runtime detail lives in the gateway Project Journal; this file is the
 > repository-side mirror (`AGENTS.md` §2).
 
+## 2026-10-24 — Evidence-driven audit, security hardening, and changelog dismissal (0.4.2)
+
+**Agent/session:** Arena coding agent, branch `arena/a2524cd0-ha-mcp`.
+
+**Baseline and scope.** Read `AGENTS.md`, `AGENT.md`, the current architecture,
+packaging, tests, CI, and historical docs. Baseline `25c5c6b` / 0.4.1 was clean;
+`pytest -q` before edits returned **329 passed**. PRs #1–#8 were merged, no
+suitable open PR or existing release/tag was listed, and `origin/main` remained
+at the baseline when rechecked. Existing UI polish and architecture were kept.
+
+**Reproduced root causes and fixes.**
+
+- **P0 changelog dismissal:** both views rendered from cached
+  `state.status.release.post_update_notice`; `POST releases/acknowledge`
+  persisted without refreshing it. Both native buttons now refresh status,
+  expose busy state, and consume the already-toasted rejection from `guarded()`.
+  Failed persistence leaves the notice visible; a new version is not hidden.
+  The final consistency sweep also replaced obsolete dotted IDs in the agent
+  form's no-status scope fallback and added a static regression.
+- **HA target authorization:** policy extraction ignored service-data and
+  nested/broad targets. An out-of-policy nested lock target returned `202`
+  before the fix. Top-level/nested/list targets are validated; area, device,
+  floor, label, mixed, and untargeted calls carry a broad sentinel that cannot
+  bypass specific allows or denies.
+- **Execution revalidation:** a fresh principal was fetched but the stale one
+  still governed scope/policy/context. In-flight scope removal and a newly
+  required read approval both reached execution before the fix; both now deny
+  before any upstream request.
+- **Proxmox:** `kind=lxc` status was labelled `vms`; it now uses `containers`.
+- **Temporary access:** global `audit:read` is persistent-agent-only at both
+  issuance and the audit endpoint, and the temporary connection catalog is
+  filtered to authorized IDs. Persistent-agent behavior is unchanged.
+- **Vault:** synthetic v0 migration unlocked once but failed the next unlock
+  because the DEK wrapper retained legacy AAD. Migration now re-wraps with v1
+  AAD; a lock/unlock-again regression passes.
+- **Persistence permissions:** a direct mode probe showed `gateway.db-wal` and
+  `gateway.db-shm` as `0644`. Private-umask initialization plus explicit repair
+  now makes the main DB and sidecars `0600`.
+- **HTTP:** an upstream error body was fully read before being discarded. It is
+  no longer consumed; a fail-on-read stream regression proves status mapping
+  still works. Successful bodies remain streamed and capped.
+- **SSH:** a short chunked read was treated as EOF (`ab` instead of `abcde`).
+  The bounded reader now loops to EOF/overflow and drains truncated stderr.
+- **Lifecycle:** an unexpected normal listener exit logged an error but returned
+  success. It now raises/fails nonzero; occupied-port startup returned 3 and
+  runtime shutdown still ran.
+
+**Verification (local, exact results).**
+
+- `.venv/bin/pytest -q` → **354 passed in 22.89s**.
+- `(cd agent_gateway && ruff check src tests && ruff format --check src tests)`
+  → clean; 75 files formatted. `mypy src` (strict config) → clean, 55 files.
+- `(cd tools/ui-smoke && npm test)` → all five harnesses passed: panel,
+  paths/errors, Agent Access, agent handoff, and changelog; 14/14 dismissal
+  checks; no captured runtime errors. The CI UI job now installs the locked
+  jsdom dependencies and runs these same five harnesses on every PR.
+- `.venv/bin/python tools/startup-smoke/smoke.py --python ... --pythonpath ...
+  --cycles 2` → PASS for both listeners, health/readiness, schema,
+  Ingress/CSRF/auth gates, two SIGTERM/restart cycles, clean exit 0.
+- `pip wheel --no-deps --no-build-isolation ./agent_gateway` → PASS after
+  installing the missing `wheel` build tool in the development venv.
+- Final `git diff --check`, version/changelog comparison, YAML parsing, and
+  added-line secret/artifact scan → clean; 46 changed files, no runtime state
+  or generated wheel/build metadata left in Git.
+
+**Documentation.** Added `docs/AUDIT_CHECKLIST.md`; synchronized both
+changelogs and all version files to 0.4.2; corrected stale API/scope/tool names,
+hard-deny lists, file permissions, migration notes, and local-start commands in
+README/DOCS/security/recovery/access docs; refreshed project state and next
+steps. Changelog acknowledgement is documented as installation-scoped.
+
+**Failed approaches.** The first jsdom reproduction reused the panel's cached
+API object and appeared to pass before the fix; fresh deep-copy responses were
+required. A failed acknowledgement was not fully handled merely because
+`guarded()` showed a toast—it rethrows, so terminal rejection handling was also
+required. The first wheel attempt failed only because `bdist_wheel` was absent.
+
+**Not run / not claimed.** No local Docker daemon or AppArmor tools, HA
+OS/Supervisor, live HA/Proxmox/SSH target, third-party MCP client, real browser,
+or independent security audit. Container build/startup and required PR checks
+remain pending at this checkpoint; merge/release has not occurred.
+
 ## 2026-10-23 — Fix Ingress panel `IndexError: 4` on `/api/admin/status` inside container (0.4.1)
 
 **Agent/session:** Arena coding agent, branch `arena/91b312ba-ha-mcp`.

@@ -272,12 +272,27 @@ class _BoundedOutput:
 
 
 async def _read_bounded(stream: Any, limit: int, *, truncate: bool = False) -> _BoundedOutput:
-    data = await stream.read(limit + 1)
-    if len(data) > limit:
-        if truncate:
-            return _BoundedOutput(data=data[:limit], truncated=True)
-        return _BoundedOutput(data=data[:limit], truncated=True)
-    return _BoundedOutput(data=data, truncated=False)
+    """Read to EOF or the bound; a short read is not an EOF signal.
+
+    Stdout stops at overflow so the caller can kill the process.  For stderr
+    (``truncate=True``), keep draining and discarding overflow so an unread
+    pipe cannot prevent the remote process from exiting.
+    """
+
+    data = bytearray()
+    truncated = False
+    while True:
+        chunk = await stream.read(8192)
+        if not chunk:
+            break
+        remaining = max(0, limit - len(data))
+        if remaining:
+            data.extend(chunk[:remaining])
+        if len(chunk) > remaining:
+            truncated = True
+            if not truncate:
+                break
+    return _BoundedOutput(data=bytes(data), truncated=truncated)
 
 
 def _decode(data: bytes) -> str:

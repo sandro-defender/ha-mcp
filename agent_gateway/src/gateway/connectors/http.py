@@ -132,10 +132,8 @@ async def request_json(
 
     try:
         if response.status_code >= 300:
-            try:
-                await response.aread()
-            except httpx.HTTPError:
-                pass
+            # The body is never returned or logged.  Do not drain it merely to
+            # classify the status: an upstream error body may be unbounded.
             raise _status_error(response.status_code)
 
         chunks: list[bytes] = []

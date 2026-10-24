@@ -1,5 +1,5 @@
-// Manual smoke harness: renders the panel in jsdom against stubbed API
-// responses. Not part of CI (needs the jsdom devDependency).
+// Smoke harness: renders the panel in jsdom against stubbed API responses.
+// Run locally with npm test; the CI UI job runs the same harness.
 import { readFileSync } from "node:fs";
 import { JSDOM, VirtualConsole } from "jsdom";
 

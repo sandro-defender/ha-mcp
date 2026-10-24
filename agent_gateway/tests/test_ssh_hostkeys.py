@@ -138,3 +138,22 @@ def test_template_parameter_values_cannot_inject_arguments() -> None:
     # two arguments and cannot interpret the quote as syntax.
     assert shlex.split(shlex.join(argv)) == argv
     assert render_template_argv(CommandTemplate(id="ok", argv=["uptime"]), {}) == ["uptime"]
+
+
+async def test_bounded_output_reads_chunked_streams_until_eof() -> None:
+    from gateway.connectors.ssh import _read_bounded
+
+    class ChunkedStream:
+        def __init__(self, chunks: list[bytes]) -> None:
+            self.chunks = list(chunks)
+
+        async def read(self, _limit: int) -> bytes:
+            return self.chunks.pop(0) if self.chunks else b""
+
+    result = await _read_bounded(ChunkedStream([b"ab", b"cd", b"e"]), limit=5)
+    assert result.data == b"abcde"
+    assert result.truncated is False
+
+    overflow = await _read_bounded(ChunkedStream([b"ab", b"cd", b"ef"]), limit=5)
+    assert overflow.data == b"abcde"
+    assert overflow.truncated is True

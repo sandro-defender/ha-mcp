@@ -18,6 +18,7 @@ from helpers import (
 )
 
 from gateway.api.apps import build_admin_app, build_agent_app
+from gateway.errors import PolicyDenied
 from gateway.runtime import Runtime
 from gateway.tools.registry import ToolRegistry
 
@@ -189,6 +190,67 @@ async def test_read_operation_succeeds_with_allowlisted_entity(
     assert lookup.json()["status"] == "succeeded"
 
 
+async def test_scope_is_revalidated_immediately_before_execution(
+    runtime: Runtime, setup: dict, monkeypatch: pytest.MonkeyPatch, ha_payload: dict
+) -> None:
+    """A scope removed while a request is in flight must stop that request."""
+
+    principal = runtime.agents.authenticate(setup["token"])
+    assert principal is not None
+    original_get_principal = runtime.agents.get_principal
+
+    def remove_read_scope(agent_id: str):
+        runtime.db.execute("UPDATE agents SET scopes=? WHERE id=?", (json.dumps(["ha:write"]), agent_id))
+        return original_get_principal(agent_id)
+
+    monkeypatch.setattr(runtime.agents, "get_principal", remove_read_scope)
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get("http://ha.test:8123/api/states/light.kitchen").mock(
+            return_value=httpx.Response(200, json=ha_payload)
+        )
+        with pytest.raises(PolicyDenied, match="scope"):
+            await runtime.operations.execute(
+                agent=principal,
+                tool_name="ha.get_state",
+                connection_id=setup["connection"]["id"],
+                params={"entity_id": "light.kitchen"},
+            )
+    assert not mock.calls
+
+
+async def test_approval_requirement_is_revalidated_before_execution(
+    runtime: Runtime, setup: dict, monkeypatch: pytest.MonkeyPatch, ha_payload: dict
+) -> None:
+    """A policy that starts requiring approval mid-flight must fail closed."""
+
+    principal = runtime.agents.authenticate(setup["token"])
+    assert principal is not None
+    original_evaluate = runtime.policies.evaluate
+    calls = 0
+
+    def require_approval_on_recheck(request):
+        nonlocal calls
+        calls += 1
+        decision = original_evaluate(request)
+        if calls == 2:
+            return decision.model_copy(update={"require_approval": True})
+        return decision
+
+    monkeypatch.setattr(runtime.policies, "evaluate", require_approval_on_recheck)
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get("http://ha.test:8123/api/states/light.kitchen").mock(
+            return_value=httpx.Response(200, json=ha_payload)
+        )
+        with pytest.raises(PolicyDenied, match="approval"):
+            await runtime.operations.execute(
+                agent=principal,
+                tool_name="ha.get_state",
+                connection_id=setup["connection"]["id"],
+                params={"entity_id": "light.kitchen"},
+            )
+    assert not mock.calls
+
+
 async def test_target_outside_policy_is_denied_before_any_network_call(runtime: Runtime, setup: dict) -> None:
     with respx.mock(assert_all_called=False) as mock:
         async with agent_http(runtime, setup["token"]) as client:
@@ -203,6 +265,71 @@ async def test_target_outside_policy_is_denied_before_any_network_call(runtime: 
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "policy_denied"
     assert not mock.calls
+
+
+@pytest.mark.parametrize(
+    "service_data",
+    [
+        {"entity_id": "lock.front_door"},
+        {"target": {"entity_id": "lock.front_door"}},
+        {"target": {"area_id": "kitchen"}},
+        {"entity_id": "light.kitchen", "area_id": "kitchen"},
+    ],
+)
+async def test_service_data_entity_is_policy_checked(
+    runtime: Runtime, setup: dict, service_data: dict
+) -> None:
+    """Nested or broad service targets must not bypass entity constraints."""
+
+    with respx.mock(assert_all_called=False) as mock:
+        async with agent_http(runtime, setup["token"]) as client:
+            response = await client.post(
+                "/api/v1/operations",
+                json={
+                    "tool": "ha.call_service",
+                    "connection_id": setup["connection"]["id"],
+                    "params": {
+                        "domain": "light",
+                        "service": "turn_on",
+                        "data": service_data,
+                    },
+                },
+            )
+    assert response.status_code == 403, response.text
+    assert response.json()["error"]["code"] == "policy_denied"
+    assert not mock.calls
+
+
+async def test_allowed_service_data_entity_still_reaches_approval(runtime: Runtime, setup: dict) -> None:
+    async with agent_http(runtime, setup["token"]) as client:
+        response = await client.post(
+            "/api/v1/operations",
+            json={
+                "tool": "ha.call_service",
+                "connection_id": setup["connection"]["id"],
+                "params": {
+                    "domain": "light",
+                    "service": "turn_on",
+                    "data": {"entity_id": ["light.kitchen"]},
+                },
+            },
+        )
+    assert response.status_code == 202, response.text
+    assert response.json()["status"] == "pending_approval"
+
+
+async def test_untargeted_service_call_fails_closed_with_entity_policy(runtime: Runtime, setup: dict) -> None:
+    async with agent_http(runtime, setup["token"]) as client:
+        response = await client.post(
+            "/api/v1/operations",
+            json={
+                "tool": "ha.call_service",
+                "connection_id": setup["connection"]["id"],
+                "params": {"domain": "light", "service": "turn_on"},
+            },
+        )
+    assert response.status_code == 403, response.text
+    assert response.json()["error"]["code"] == "policy_denied"
 
 
 async def test_missing_scope_is_denied(runtime: Runtime, setup: dict) -> None:
@@ -388,3 +515,19 @@ async def test_expired_token_is_rejected(runtime: Runtime, setup: dict) -> None:
         response = await client.get("/api/v1/tools")
     assert response.status_code == 401
     assert runtime.agents.authenticate(setup["token"]) is None
+
+
+async def test_temporary_agent_cannot_read_global_audit(runtime: Runtime, setup: dict) -> None:
+    """Legacy or manually altered temporary rows still fail closed at the API."""
+
+    async with await admin_client(runtime) as admin:
+        agent, token = await create_agent(admin, name="legacy-audit", scopes=["audit:read"])
+    runtime.db.execute(
+        "UPDATE agents SET kind='temporary', allowed_connections='[]', operation_classes='[\"read\"]', "
+        "session_epoch=? WHERE id=?",
+        (runtime.agents.current_session_epoch(), agent["id"]),
+    )
+    async with agent_http(runtime, token) as client:
+        response = await client.get("/api/v1/audit")
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "policy_denied"

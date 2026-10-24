@@ -29,3 +29,9 @@ a runtime error.
 `agent_page_smoke.mjs` renders the agent-facing handoff page in jsdom with a
 stubbed redeem response and checks that the token, base URL, MCP endpoint, and
 one-time warning render while the URL fragment is stripped.
+
+`changelog_smoke.mjs` is the post-update notice regression harness. It checks
+both dismissal controls, immediate removal, no reappearance on navigation, a
+genuinely new release still being shown, and the failed-persistence path. Its
+API stub returns fresh objects on every read so a stale `state.status` snapshot
+cannot be masked by shared test objects.

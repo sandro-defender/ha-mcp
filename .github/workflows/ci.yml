@@ -67,6 +67,14 @@ jobs:
           if grep -nE 'localStorage\.|sessionStorage\.|indexedDB\.' agent_gateway/src/gateway/ui/static/app.js; then
             echo "persistent browser storage found in UI"; exit 1
           fi
+      - name: Install jsdom smoke dependencies
+        working-directory: tools/ui-smoke
+        run: npm ci
+      - name: jsdom behavior smoke tests
+        working-directory: tools/ui-smoke
+        env:
+          REPO: ${{ github.workspace }}
+        run: npm test
   packaging:
     name: Version sync & packaging metadata
     runs-on: ubuntu-latest

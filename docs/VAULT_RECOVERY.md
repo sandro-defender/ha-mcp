@@ -7,7 +7,7 @@
 | `/data/vault.json` | Encrypted records, KDF parameters, wrapped DEK | `0600`, directory `0700` |
 | `/data/vault.json.bak` | Previous good copy written on each save | `0600` |
 | `/data/unlock.key` | Auto-unlock key (only when enabled) | `0600` |
-| `/data/gateway.db` | Agents, policies, connections (no secrets), approvals, audit, operations | created by SQLite |
+| `/data/gateway.db` | Agents, policies, connections (no upstream plaintext), approvals, audit, operations, journal | `0600`; WAL/SHM sidecars also `0600` |
 | `/data/ssh_known_hosts` | Trusted SSH host keys | `0600` |
 | `/data/options.json` | Supervisor-managed add-on options (no secrets) | Supervisor |
 
@@ -18,7 +18,7 @@
   "format": "hag-vault",
   "version": 1,
   "kdf": {"algorithm": "argon2id", "salt": "…", "memory_cost": 65536,
-          "time_cost": 3, "parallelism": 1, "hash_len": 32},
+          "time_cost": 3, "parallelism": 2, "hash_len": 32},
   "wrapped_dek": {"nonce": "…", "ciphertext": "…"},
   "auto_unlock": {"nonce": "…", "ciphertext": "…"} | null,
   "records": {"<32 hex>": {"nonce": "…", "ciphertext": "…"}},
@@ -31,7 +31,7 @@
   `hag-vault:v1:dek`.
 * Each record is encrypted with the DEK and AAD `hag-vault:v1:record:<id>`, so a
   record cannot be moved to another id without failing authentication.
-* Version 0 documents (if ever encountered) are migrated on unlock.
+* Version 0 documents (if ever encountered) are migrated on unlock; the DEK is re-wrapped with v1 AAD so later lock/unlock and restart continue to work.
 
 ## Normal operations
 

@@ -220,7 +220,7 @@ bounds that drain with `timeout_graceful_shutdown=5`.
   uid 1000, `/healthz` and `/readyz` answer on both listeners.
 - `docker restart` comes back ready, and `docker stop` exits **0** (no SIGKILL)
   — i.e. the app receives TERM, drains, and the container shuts down cleanly.
-- `tests/test_startup.py` (31 checks) covers the same contract statically.
+- `tests/test_startup.py` covers the same contract statically.
 
 A run where the runner cannot load the profile reports a `notice` annotation and
 is **not** evidence that the rules are correct.
@@ -242,9 +242,10 @@ is **not** evidence that the rules are correct.
   `/app/src/gateway/releases.py` has only four parent directories). Fixed in 0.4.1
   by iterating `itertools.islice(here.parents, 5)`, and gated at both `docker build`
   time (`Dockerfile`) and CI container smoke time (`tools/startup-smoke/docker-smoke.sh`).
-- **Still pending on real Home Assistant OS:** verifying 0.4.1 Ingress panel
-  initialization (vault setup/unlock), Project Journal persistence across a
-  restart, and an end-to-end Agent Access session.
+- **Still pending on real Home Assistant OS:** verifying the 0.4.2 Ingress
+  panel, both changelog-dismissal controls, vault setup/unlock and legacy
+  migration, Project Journal persistence across a restart, and an end-to-end
+  Agent Access session. Local process tests are not a substitute for this.
 
 ## Related files
 

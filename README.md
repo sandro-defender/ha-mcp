@@ -4,7 +4,7 @@
 
 > Policy-controlled gateway for AI agents to operate Home Assistant, Proxmox VE, and restricted SSH targets — without ever receiving credentials.
 
-[![version](https://img.shields.io/badge/version-0.3.1-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.4.2-blue)](CHANGELOG.md)
 [![architectures](https://img.shields.io/badge/arch-amd64%20%7C%20aarch64-lightgrey)](agent_gateway/config.yaml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -24,7 +24,7 @@ A **Home Assistant OS add-on** that sits between external AI coding agents (Clau
 - **Credentials stay in an AES-256-GCM + Argon2id vault** inside `/data`. They are never returned to agents, never appear in the UI after saving, and never enter logs or error messages.
 - **Deny-by-default policies, single-use approvals, and a redacted audit log** make every operation reviewable.
 
-Project status: **0.4.0 — S6 startup fix + temporary agent access broker.** The full suite, lint, type-check and the process-level startup harness pass in this environment. The add-on has **not** been built or booted on Home Assistant OS here, AppArmor was not enforced by a kernel here, and no live Home Assistant/Proxmox/SSH target was contacted. See [Verification log](#verification-log), [`docs/STARTUP_TROUBLESHOOTING.md`](docs/STARTUP_TROUBLESHOOTING.md), [`docs/AGENT_ACCESS.md`](docs/AGENT_ACCESS.md) and [`docs/SECURITY.md`](docs/SECURITY.md).
+Project status: **0.4.2 — evidence-driven security and reliability audit.** The full Python suite, lint, strict type-check, jsdom UI harnesses, process-level startup/restart checks, and wheel build pass in this environment. Docker and AppArmor enforcement are not available locally and remain CI/live verification gates; no live Home Assistant OS, Home Assistant/Proxmox/SSH target, third-party MCP client, or real browser was used. See [Verification log](#verification-log), [`docs/STARTUP_TROUBLESHOOTING.md`](docs/STARTUP_TROUBLESHOOTING.md), [`docs/AGENT_ACCESS.md`](docs/AGENT_ACCESS.md) and [`docs/SECURITY.md`](docs/SECURITY.md).
 
 ---
 
@@ -116,7 +116,7 @@ Network: `8098/tcp` is **`null` (not published)** by default; expose it on a tru
 4. **Agents & Permissions**: create an identity per client (`windows-claude-desktop`), copy the `hag_…` token once, assign scopes and policy rules, and dry-run with the **Policy Simulator**.
 5. **Agent listener**: expose `8098/tcp` on the host for your LAN/VPN only if needed. Never port-forward `8098` or `8099` to the public internet.
 
-Upgrade, backup, and recovery are documented in [`docs/VAULT_RECOVERY.md`](docs/VAULT_RECOVERY.md) and [`agent_gateway/DOCS.md`](agent_gateway/DOCS.md). The SQLite schema migrates automatically (`v1 → v2` adds `connections.last_ok_at`, `connections.last_check_detail`, `agents.last_rotated_at`; `v2 → v3` adds the `journal_*` Project Journal tables without touching existing records).
+Upgrade, backup, and recovery are documented in [`docs/VAULT_RECOVERY.md`](docs/VAULT_RECOVERY.md) and [`agent_gateway/DOCS.md`](agent_gateway/DOCS.md). The SQLite schema migrates automatically through v4 without discarding existing records (`v2` adds connection/agent diagnostic fields, `v3` adds Project Journal tables, and `v4` adds temporary-agent access). Legacy v0 vaults are migrated on unlock and re-wrapped so they can be unlocked again after restart.
 
 ---
 
@@ -172,20 +172,20 @@ Every REST and MCP call is authorized by the same `PolicyService` and emits a re
 
 | Group | Tool | Risk | Approval | Scope |
 | :--- | :--- | :--- | :--- | :--- |
-| **Home Assistant** | `ha.get_state` | read | — | `ha.read` |
-| | `ha.list_entities` | read | — | `ha.read` |
-| | `ha.get_config` | read | — | `ha.read` |
-| | `ha.call_service` | write | **required** | `ha.write` |
-| **Proxmox VE** | `proxmox.list_nodes` | read | — | `proxmox.read` |
-| | `proxmox.list_vms` | read | — | `proxmox.read` |
-| | `proxmox.list_containers` | read | — | `proxmox.read` |
-| | `proxmox.get_vm_status` | read | — | `proxmox.read` |
-| | `proxmox.get_task_status` | read | — | `proxmox.read` |
-| **SSH** | `ssh.service_status` | read | — | `ssh.read` |
-| | `ssh.read_log` | read | — | `ssh.read` |
-| | `ssh.run_template` | write | **required** | `ssh.execute` |
+| **Home Assistant** | `ha.get_state` | read | — | `ha:read` |
+| | `ha.list_entities` | read | — | `ha:read` |
+| | `ha.get_config` | read | — | `ha:read` |
+| | `ha.call_service` | write | **required** | `ha:write` |
+| **Proxmox VE** | `proxmox.list_nodes` | read | — | `proxmox:read` |
+| | `proxmox.list_vms` | read | — | `proxmox:read` |
+| | `proxmox.list_containers` | read | — | `proxmox:read` |
+| | `proxmox.get_vm_status` | read | — | `proxmox:read` |
+| | `proxmox.get_task_status` | read | — | `proxmox:read` |
+| **SSH** | `ssh.service_status` | read | — | `ssh:read` |
+| | `ssh.read_log` | read | — | `ssh:read` |
+| | `ssh.run_command_template` | write | **required** | `ssh:write` |
 
-`hassio`, `homeassistant`, `shell_command`, `command_line`, `python_script`, `recorder` service domains are hard-blocked. Proxmox write operations and arbitrary shell do not exist (SSH `run_template` is template-only with allowlisted `argv` vectors).
+`hassio`, `homeassistant`, `shell_command`, `python_script`, `system_log`, and `recorder` service domains are hard-blocked. Proxmox write operations and arbitrary shell do not exist (SSH `run_command_template` is template-only with allowlisted `argv` vectors).
 
 Agents granted the `journal:read`/`journal:write` scopes and a `journal.*` policy rule additionally get **Project Journal** access — REST under `/api/v1/journal/*` and connectionless MCP tools (`journal.read_project_state`, `journal.record_work`, `journal.record_test_run`, `journal.generate_handoff`, …) through the same scope + policy + rate-limit + audit path. Journal records are redacted, immutable, and never grant permission to execute anything. See [`docs/JOURNAL.md`](docs/JOURNAL.md) and [`AGENTS.md`](AGENTS.md).
 
@@ -195,7 +195,7 @@ Agents granted the `journal:read`/`journal:write` scopes and a `journal.*` polic
 
 - **Version is a single source of truth:** `agent_gateway/config.yaml`, `agent_gateway/pyproject.toml`, `agent_gateway/Dockerfile`, `agent_gateway/src/gateway/__init__.py`, `CHANGELOG.md`, and `agent_gateway/CHANGELOG.md` are synchronized; CI enforces this.
 - **Changelog:** [`CHANGELOG.md`](CHANGELOG.md) follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/) and [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
-- **Release notes in HA:** the Ingress UI surfaces `GET /api/admin/releases` (local Keep-a-Changelog parsing), on-demand `POST /api/admin/releases/check` (cached GitHub check), and a one-time post-update banner dismissed via `POST /api/admin/releases/acknowledge`.
+- **Release notes in HA:** the Ingress UI surfaces `GET /api/admin/releases` (local Keep-a-Changelog parsing), on-demand `POST /api/admin/releases/check` (cached GitHub check), and a post-update banner dismissed via `POST /api/admin/releases/acknowledge`. Acknowledgement is intentionally installation-scoped (shared by the administrators of one add-on), never hides a genuinely newer version, and leaves the full history available under **Updates & Changelog**.
 - **Tag → GitHub Release:** pushing a tag `v0.2.0` triggers `.github/workflows/release.yml` to create the GitHub Release from the changelog section.
 - **Diagnostics:** `GET /readyz`, `GET /api/admin/readiness`, `GET /api/admin/diagnostics`, and `GET /api/admin/diagnostics/export` (`gateway-diagnostics-redacted.json`, recursively redacted, `hag-diagnostics-v1` format).
 
@@ -211,16 +211,16 @@ python3 -m venv .venv
 .venv/bin/ruff check agent_gateway/src agent_gateway/tests
 .venv/bin/ruff format --check agent_gateway/src agent_gateway/tests
 (cd agent_gateway && ../.venv/bin/mypy src)
-.venv/bin/pytest -q                 # 253 tests
+.venv/bin/pytest -q                 # 353 tests
 node --check agent_gateway/src/gateway/ui/static/app.js
 
 # run the gateway locally (development only)
-python -m gateway --data-dir ./data --ingress-port 8099 --agent-port 8098
+PYTHONPATH=agent_gateway/src HAG_DATA_DIR="$PWD/data" .venv/bin/python -m gateway
 ```
 
 Branding assets are generated offline with `tools/generate_branding.py` (no remote assets; `resvg` + `Pillow`).
 
-CI: `lint + type-check + test` → `static UI checks` → `amd64 image build`. Releases are built by the Home Assistant builder in `build.yaml` (`ghcr.io/home-assistant/base:3.24`, `amd64` + `aarch64`).
+CI: `lint + type-check + test` and `static + jsdom UI checks` → `amd64 image build + container startup smoke`. Releases are built by the Home Assistant builder in `build.yaml` (`ghcr.io/home-assistant/base:3.24`, `amd64` + `aarch64`).
 
 ---
 
@@ -235,17 +235,18 @@ CI: `lint + type-check + test` → `static UI checks` → `amd64 image build`. R
 
 ## Verification log
 
+Current 0.4.2 audit evidence (2026-10-24). Mocked upstreams and jsdom are not live integration tests.
+
 | Check | Result |
 | :--- | :--- |
-| `ruff check` / `ruff format --check` / `mypy --strict` | pass |
-| Container startup smoke (`tools/startup-smoke/docker-smoke.sh`, CI `image` job) | **pass** — built image started with `apparmor=ha_agent_gateway` loaded from `apparmor.txt`; S6 stage 2, `/healthz` + `/readyz` 200, gateway uid 1000, `docker restart` ready, `docker stop` exit 0 (no SIGKILL) |
-| `pytest -q` | **323 passed** (incl. 33 temporary-access broker tests, the static S6/AppArmor startup contract, concurrent handoff redemption, restart revocation, epoch rejection, and the Project Journal suite) |
-| `tools/startup-smoke/smoke.py` (real `run.sh`, both listeners, Ingress gate, SIGTERM, restart) | pass — 2 cycles, health/readiness, clean exit 0 |
-| jsdom panel smoke (`tools/ui-smoke`: panel, paths, Agent Access, agent handoff page) | pass — no runtime errors; session issue/revoke and handoff rendering exercised against stubbed API payloads |
-| `node --check app.js` / `agent.js` + `grep` for inline scripts / remote assets / browser storage | pass |
-| Add-on image build + container boot (CI, `linux/amd64`) | **not run here** (no Docker daemon, no registry access). Defined in `.github/workflows/ci.yml` (`image` job + `tools/startup-smoke/docker-smoke.sh`); when the runner has AppArmor the real profile is loaded and enforced |
-| Live HA OS deployment / real HA/Proxmox/SSH targets / MCP client E2E | **not run** (no lab in this environment) |
-| Third-party security audit | **not performed** |
+| `ruff check` / `ruff format --check` / strict `mypy src` | **pass** |
+| `pytest -q` | **354 passed** |
+| jsdom UI smoke (`tools/ui-smoke`: panel, paths/errors, Agent Access, agent handoff, changelog) | **pass** — five harnesses, including 14 dismissal checks and no captured runtime errors |
+| Process startup smoke (`tools/startup-smoke/smoke.py`) | **pass** — two start/readiness/SIGTERM/restart cycles on throwaway data; port-conflict probe exits nonzero |
+| Python wheel build (`pip wheel --no-deps --no-build-isolation ./agent_gateway`) | **pass** |
+| Docker/AppArmor container startup (`tools/startup-smoke/docker-smoke.sh`, CI `image` job) | **not run locally** — no Docker daemon or AppArmor tools; required CI evidence is tracked in `docs/WORKLOG.md` |
+| Live HA OS deployment / real HA/Proxmox/SSH targets / third-party MCP client E2E / real browser | **not run** — infrastructure unavailable |
+| Third-party security audit, penetration test, or fuzzing | **not performed** |
 
 ---
 

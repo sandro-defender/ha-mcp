@@ -7,6 +7,7 @@ transactions short and serialized; this is not a multi-replica design.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 from collections.abc import Iterator, Sequence
@@ -368,21 +369,33 @@ class Database:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._lock = threading.RLock()
-        self._conn = sqlite3.connect(str(self.path), check_same_thread=False, isolation_level=None)
-        self._conn.row_factory = sqlite3.Row
-        with self._lock:
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA synchronous=FULL")
-            self._conn.execute("PRAGMA foreign_keys=ON")
-            self._conn.execute("PRAGMA busy_timeout=5000")
-            self._conn.executescript(SCHEMA)
-            self._ensure_schema_version()
-        # The database contains hashes, policies, and audit data, not vault
-        # secrets; still keep it owner-only.
+        # SQLite creates WAL/SHM sidecars using the process umask, not the main
+        # database's chmod.  Initialize all three under a private umask; this
+        # runs before the listeners and worker requests start.
+        previous_umask = os.umask(0o077)
         try:
-            self.path.chmod(0o600)
-        except OSError:
-            pass
+            self._conn = sqlite3.connect(str(self.path), check_same_thread=False, isolation_level=None)
+            self._conn.row_factory = sqlite3.Row
+            with self._lock:
+                self._conn.execute("PRAGMA journal_mode=WAL")
+                self._conn.execute("PRAGMA synchronous=FULL")
+                self._conn.execute("PRAGMA foreign_keys=ON")
+                self._conn.execute("PRAGMA busy_timeout=5000")
+                self._conn.executescript(SCHEMA)
+                self._ensure_schema_version()
+            # Also repair permissions when opening a database created by an
+            # older release or with a more permissive umask.
+            for candidate in (
+                self.path,
+                self.path.with_name(self.path.name + "-wal"),
+                self.path.with_name(self.path.name + "-shm"),
+            ):
+                try:
+                    candidate.chmod(0o600)
+                except OSError:
+                    pass
+        finally:
+            os.umask(previous_umask)
 
     def _ensure_schema_version(self) -> None:
         from ..utils import iso
