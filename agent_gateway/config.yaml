@@ -47,4 +47,8 @@ schema:
   approval_ttl_seconds: "int(30,3600)"
   auto_shutdown_enabled: "bool"
   auto_shutdown_timeout_minutes: "int(5,1440)"
-  trusted_proxies: "list(str)"
+  # NOTE: in the Supervisor schema DSL a string of the form `list(a|b)` is an
+  # *enum* (one of the |-split values), NOT "list of". Real list options use
+  # the YAML list form below (same as admin_user_ids).
+  trusted_proxies:
+    - "str"

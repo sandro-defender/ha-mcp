@@ -79,6 +79,43 @@ def test_option_defaults_match_the_application() -> None:
     assert defaults.trusted_proxies == ()
 
 
+def test_schema_dsl_forms_match_supervisor_semantics() -> None:
+    """Guard the Supervisor schema-DSL gotcha that broke the option config.
+
+    In the Supervisor's app-options validator a *string* schema of the form
+    ``list(a|b)`` compiles to ``vol.In(['a', 'b'])`` — an **enum of the
+    |-split literals**, not "a list of". A real list option must therefore
+    use the YAML list form (``key: ["str"]``), like ``admin_user_ids``.
+    ``trusted_proxies: "list(str)"`` rejected every value with the error
+    "value must be one of ['str']"; this test keeps the correct forms.
+    """
+
+    schema = CONFIG["schema"]
+    options = CONFIG["options"]
+
+    # Enum-style string schemas: value must be one of the alternatives.
+    assert schema["log_level"] == "list(debug|info|warning|error)"
+    alternatives = schema["log_level"][len("list(") : -1].split("|")
+    assert options["log_level"] in alternatives
+
+    # List-form schemas: YAML list of per-item schemas; values are lists.
+    assert schema["admin_user_ids"] == ["str"]
+    assert schema["trusted_proxies"] == ["str"]
+    assert options["admin_user_ids"] == []
+    assert options["trusted_proxies"] == []
+    assert isinstance(options["admin_user_ids"], list)
+    assert isinstance(options["trusted_proxies"], list)
+
+    # No schema may use the "list(str)" string form: as an enum it can only
+    # ever accept the literal string "str".
+    for key, typ in schema.items():
+        if isinstance(typ, str) and typ.startswith("list("):
+            literals = typ[len("list(") : -1].split("|")
+            assert literals != ["str"], (
+                f"{key}: 'list(str)' is an enum of the literal 'str', not a list of strings"
+            )
+
+
 def test_every_option_has_a_schema_entry() -> None:
     assert set(CONFIG["options"]) == set(CONFIG["schema"])
     assert CONFIG["schema"]["log_level"] == "list(debug|info|warning|error)"
