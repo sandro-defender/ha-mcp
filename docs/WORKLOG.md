@@ -5,6 +5,24 @@
 > Runtime detail lives in the gateway Project Journal; this file is the
 > repository-side mirror (`AGENTS.md` §2).
 
+## 2026-10-24 — Hotfix: add-on schema DSL (`trusted_proxies`)
+
+**Issue (user-reported):** Home Assistant add-on configuration rejected with
+`Invalid configuration — value must be one of ['str']`.
+
+**Root cause (verified against `home-assistant/supervisor`
+`supervisor/apps/options.py`):** in the Supervisor options validator a string
+schema `list(a|b)` compiles to `vol.In(a.split("|"))` — an **enum of the
+|-split literals**, not a list type. `config.yaml` declared
+`trusted_proxies: "list(str)"` → `vol.In(['str'])` → every value (including
+`[]`) failed with exactly that message. `log_level: list(debug|info|...)`
+works because it genuinely is an enum.
+
+**Fix:** schema changed to the YAML list form used by `admin_user_ids`
+(`trusted_proxies: ["str"]`), which the validator treats as "list of str".
+Regression guard added: `test_schema_dsl_forms_match_supervisor_semantics`
+asserts the enum/list-form split and forbids the `list(str)` string form.
+
 ## 2026-10-24 — Prompt #2 Phase 4: backend IP allowlist/denylist + connection attempts
 
 **Implemented:**
@@ -34,7 +52,8 @@
   `PATCH/DELETE /api/admin/ip/rules/{id}`, `PUT /api/admin/ip/settings`,
   `GET /api/admin/ip/attempts` (pagination + filters) — management app only,
   full Ingress gate, audit events on every mutation.
-- Add-on option `trusted_proxies: []` (`list(str)`, validated) +
+- Add-on option `trusted_proxies: []` (schema list-form `["str"]` — note:
+  the Supervisor DSL string `list(...)` is an *enum*, not "list of") +
   `HAG_TRUSTED_PROXIES` env override for test rigs; `Settings.trusted_proxies`.
 - UI: 13th nav item **Access Control** + `viewIpAccess()` (enforcement card,
   rules CRUD with edit-prefill and confirm-on-delete, attempts table with
