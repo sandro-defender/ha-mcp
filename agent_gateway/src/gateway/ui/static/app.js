@@ -822,7 +822,21 @@
     );
     $("#toggle-agents").addEventListener("click", toggleAgents);
     var dismissBtn = document.getElementById("dismiss-banner");
-    if (dismissBtn) dismissBtn.addEventListener("click", function(){ guarded(async function(){ await api("releases/acknowledge", {method:"POST", body:{}}); toast("Notice dismissed."); await navigate("dashboard"); }); });
+    if (dismissBtn) dismissBtn.addEventListener("click", function (event) {
+      withBusy(event.currentTarget, function () {
+        return guarded(async function () {
+          await api("releases/acknowledge", { method: "POST", body: {} });
+          // This view renders the notice from the boot-time state.status
+          // snapshot, so acknowledge first and then refresh that snapshot.
+          await refreshStatus();
+          toast("Notice dismissed.");
+          await navigate("dashboard");
+        });
+      }).catch(function () {
+        // guarded() already displayed the persistence error; keep the notice
+        // visible and do not create an unhandled promise rejection.
+      });
+    });
     $$("[data-go]").forEach((node) =>
       node.addEventListener("click", (event) => {
         event.preventDefault();
@@ -3082,7 +3096,7 @@
       if (diag && diag.agents) enriched = diag.agents;
     } catch {}
 
-    $("#section").innerHTML = '<section class="card glass" aria-labelledby="create-agent-title"><div class="card-header"><h3 id="create-agent-title">Create agent identity</h3>' + badge("token shown once", "warn") + '</div><form class="form" id="agent-form" novalidate><div class="form-row"><div class="field"><label for="agent-name">Name</label><input id="agent-name" required maxlength="64" autocomplete="off" placeholder="windows-claude-agent"></div><div class="field"><label for="agent-expiry">Expiry (optional)</label><input id="agent-expiry" type="datetime-local"><p class="field-hint">Rotation is still recommended even without an expiry.</p></div></div><div class="field"><label for="agent-description">Description</label><input id="agent-description" maxlength="500" autocomplete="off" placeholder="Owner, purpose, ticket"><p class="field-hint">Visible to reviewers when approving requests.</p></div><fieldset class="field plain-fieldset"><legend class="field-label mb-2">Scopes</legend><div class="chip-row" id="agent-scopes">' + ((state.scopes && state.scopes.length ? state.scopes : [{id:"ha.read"},{id:"ha.write"},{id:"proxmox.read"},{id:"ssh.read"},{id:"ssh.execute"}]).map(function(s){ return '<label class="chip" data-selected="false"><input type="checkbox" value="' + esc(s.id) + '"><span>' + esc(s.id) + '</span></label>'; }).join("")) + '</div><p class="field-error" id="agent-scopes-error"></p></fieldset><div class="field"><label for="agent-template">Initial policy</label><select id="agent-template"><option value="deny">Deny all (configure later)</option><option value="home_assistant_read_all">Home Assistant read-only</option><option value="proxmox_read_all">Proxmox read-only</option><option value="ssh_read">SSH read-only</option></select></div><div class="button-row"><button type="submit" class="button" data-variant="primary" id="create-agent-btn">' + icon("plus", 16) + '<span>Create agent</span></button></div></form></section><div class="list mt-4">' + (enriched.length ? enriched.map(agentCard).join("") : emptyState("No agent identities","Create a separate, revocable token for each agent. Never share tokens between agents.","shield")) + '</div>';
+    $("#section").innerHTML = '<section class="card glass" aria-labelledby="create-agent-title"><div class="card-header"><h3 id="create-agent-title">Create agent identity</h3>' + badge("token shown once", "warn") + '</div><form class="form" id="agent-form" novalidate><div class="form-row"><div class="field"><label for="agent-name">Name</label><input id="agent-name" required maxlength="64" autocomplete="off" placeholder="windows-claude-agent"></div><div class="field"><label for="agent-expiry">Expiry (optional)</label><input id="agent-expiry" type="datetime-local"><p class="field-hint">Rotation is still recommended even without an expiry.</p></div></div><div class="field"><label for="agent-description">Description</label><input id="agent-description" maxlength="500" autocomplete="off" placeholder="Owner, purpose, ticket"><p class="field-hint">Visible to reviewers when approving requests.</p></div><fieldset class="field plain-fieldset"><legend class="field-label mb-2">Scopes</legend><div class="chip-row" id="agent-scopes">' + ((state.scopes && state.scopes.length ? state.scopes : [{id:"ha:read"},{id:"ha:write"},{id:"proxmox:read"},{id:"ssh:read"},{id:"ssh:write"}]).map(function(s){ return '<label class="chip" data-selected="false"><input type="checkbox" value="' + esc(s.id) + '"><span>' + esc(s.id) + '</span></label>'; }).join("")) + '</div><p class="field-error" id="agent-scopes-error"></p></fieldset><div class="field"><label for="agent-template">Initial policy</label><select id="agent-template"><option value="deny">Deny all (configure later)</option><option value="home_assistant_read_all">Home Assistant read-only</option><option value="proxmox_read_all">Proxmox read-only</option><option value="ssh_read">SSH read-only</option></select></div><div class="button-row"><button type="submit" class="button" data-variant="primary" id="create-agent-btn">' + icon("plus", 16) + '<span>Create agent</span></button></div></form></section><div class="list mt-4">' + (enriched.length ? enriched.map(agentCard).join("") : emptyState("No agent identities","Create a separate, revocable token for each agent. Never share tokens between agents.","shield")) + '</div>';
 
     try {
       var scopeData = await api("scopes");
@@ -3477,7 +3491,19 @@
     var checkBtn = document.getElementById("check-updates");
     if (checkBtn) checkBtn.addEventListener("click", function(e){ withBusy(e.currentTarget, function(){ return guarded(async function(){ var fresh=await api("releases/check",{method:"POST", body:{}}); toast(fresh.update_available ? 'Update available: v' + fresh.latest_version : "You are on the latest release."); await navigate("updates"); }); }); });
     var ackBtn = document.getElementById("ack-release");
-    if (ackBtn) ackBtn.addEventListener("click", function(){ guarded(async function(){ await api("releases/acknowledge",{method:"POST", body:{}}); toast("Post-update notice dismissed."); await navigate("updates"); }); });
+    if (ackBtn) ackBtn.addEventListener("click", function (event) {
+      withBusy(event.currentTarget, function () {
+        return guarded(async function () {
+          await api("releases/acknowledge", { method: "POST", body: {} });
+          // Keep the dashboard's state.status-driven notice in sync too.
+          await refreshStatus();
+          toast("Post-update notice dismissed.");
+          await navigate("updates");
+        });
+      }).catch(function () {
+        // guarded() already displayed the persistence error.
+      });
+    });
   }
 
   async function saveLimits(form, limits) {

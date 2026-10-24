@@ -58,7 +58,10 @@ def _targets_match(rule: PolicyRule, request: PolicyRequest) -> bool:
 def _targets_hit_deny(rule: PolicyRule, request: PolicyRequest) -> bool:
     for key, patterns in rule.constraints.items():
         values = request.targets.get(key)
-        if values and any(match_any(value, patterns) for value in values):
+        # A request-side ``*`` means the upstream operation may affect an
+        # unknown/broad set of targets (for example an HA area-targeted
+        # service call). It must not bypass a specific deny constraint.
+        if values and any(value == "*" or match_any(value, patterns) for value in values):
             return True
     return False
 

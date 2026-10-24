@@ -35,21 +35,21 @@ and REST operations both go through `OperationService.execute`
 | Control | Implementation |
 | --- | --- |
 | Management app is unreachable except via Ingress | `AdminGateMiddleware` requires peer `172.30.32.2` (configurable via `HAG_ADMIN_ALLOWED_IPS`) and a well-formed `X-Remote-User-Id`; optional `admin_user_ids` allowlist |
-| CSRF / cross-site protection | Unsafe `/api/` requests need `X-Gateway-Request: 1`; `Origin` must match `Host`; `Sec-Fetch-Site: cross-site` is rejected |
+| CSRF / cross-site protection | Unsafe `/api/` requests need `X-Gateway-Request: 1`; `Origin` must match `Host` or the Supervisor-supplied `X-Forwarded-Host`; `Sec-Fetch-Site: cross-site` is rejected |
 | Agent authentication | 256-bit random token, stored as a SHA-256 digest only, shown once, prefix retained for display |
 | Token handling | Missing, duplicate, or non-Bearer headers rejected; tokens in query strings rejected with `400 token_in_query`; auth failures rate-limited per peer |
 | Deny by default | A policy document with no matching allow rule denies; unknown fields, unknown constraints, and malformed documents are rejected and the previous policy is kept |
 | Least privilege | Scopes (`ha:read`, `ha:write`, `proxmox:read`, `ssh:read`, `ssh:write`, `audit:read`, `journal:read`, `journal:write`) and per-rule target filters (`entities`, `domains`, `nodes`, `vms`, `ssh_paths`, …) |
 | Project Journal | Same `PolicyService` via `journal.*` pseudo-tools (scope + rule + rate limit + audit on REST and MCP); records are redacted pre-storage, append-only (no edit/delete routes), owner-scoped for writes, idempotency-keyed; `require_approval` on a journal rule denies (journal writes execute nothing and are not approval-gated) |
 | Approvals | Required for every non-read tool; bound to agent, tool, connection, canonicalized parameters, policy revision, and tool schema; single use; expiring |
-| Revalidation | Agent state, emergency switch, and policy are re-evaluated immediately before the sensitive call |
-| Credential isolation | `CredentialVault` never returns secret values over HTTP; agent routes expose only name/type/status |
+| Revalidation | Fresh agent state (including scopes/session constraints), emergency switch, policy, and any newly required approval are re-evaluated immediately before the sensitive call |
+| Credential isolation | `CredentialVault` never returns secret values over HTTP; agent routes expose only name/type/status, and temporary sessions see only authorized connection IDs |
 | Redaction | `redact_value`/`redact_text` applied to tool results, audit parameters, and admin action parameters; admin audit drops credential payload keys outright |
 | TLS verification | `verify_tls: false` is rejected with `422`; custom CAs are supported through a vault-stored CA secret |
 | SSH host keys | Trust is required before connecting; keys are written to a `0600` known-hosts file; replacing a trusted key requires `replace=true` and an explicit UI confirmation |
 | No shell strings | SSH templates are argv vectors with enumerated parameter allowlists, joined with `shlex.join`; no `shell=True`, no agent string interpolation |
 | Blocked HA domains | `shell_command`, `python_script`, `hassio`, `homeassistant`, `system_log`, `recorder` are refused even if a policy allows them |
-| Response bounds | Per-call timeouts, output byte ceilings, and body-size limits; oversized results fail the operation instead of truncating silently |
+| Response bounds | Per-call timeouts, output byte ceilings, and body-size limits; oversized results fail the operation instead of truncating silently; discarded HTTP error bodies are not read; SSH readers handle chunked streams |
 | Emergency stop | `emergency_disabled` rejects every agent request with `503`; management access is unaffected |
 
 ## Credential handling
@@ -60,6 +60,8 @@ and REST operations both go through `OperationService.execute`
 * Argon2id defaults: 64 MiB, time cost 3, parallelism 2 (lowered only in tests).
 * Auto-unlock stores `data/unlock.key` (0600) next to the vault. This trades
   at-rest protection for unattended restarts and is off by default.
+* SQLite databases and their WAL/SHM sidecars are initialized and repaired to
+  `0600`; they contain token digests, policies, audit, and journal data.
 * Secrets are only decrypted inside the operation handler that needs them and
   are never written to logs, audit rows, error messages, or HTTP responses.
 
@@ -117,7 +119,8 @@ changing the upstream model:
   `GET /agent`; the code travels in the URL fragment and is never sent to the
   server, while the token never appears in a URL, log, referrer, or history.
 * A session is narrower than a persistent agent: explicit connection
-  allowlist, read/write operation classes only (destructive is rejected), and
+  allowlist (also applied to the discovery catalog), read/write operation
+  classes only (destructive is rejected), no global `audit:read`, and
   a server-generated policy that only allows the tools those settings need.
   Writes still require a human approval bound to the exact request.
 * Revocation is immediate and idempotent. With `agent_sessions_revoke_on_restart`
@@ -146,9 +149,9 @@ an authorization input.
 
 | Class | Policy in this release |
 |---|---|
-| 1 Read-only | Executes immediately only with matching scope **and** an explicit allow rule with target constraints; no rule = deny. Response bounds and redaction still apply. |
+| 1 Read-only | Executes immediately only with matching scope **and** a matching allow rule plus all applicable target constraints; no rule = deny. Response bounds and redaction still apply. |
 | 2 Reversible low-risk writes | None execute immediately: every non-read tool requires approval by default (`policy/engine.py`: `require_approval = risk != "read"`); an admin may not waive this per-rule below the engine default for write risk. |
-| 3 Sensitive/high-impact | Only `ha.call_service` (non-blocked domains) and `ssh.run_template` exist; both are approval-gated, single-use, parameter-bound. HA/Proxmox restarts and network changes are not implemented as tools. |
+| 3 Sensitive/high-impact | Only `ha.call_service` (non-blocked domains) and `ssh.run_command_template` exist; both are approval-gated, single-use, parameter-bound. HA/Proxmox restarts and network changes are not implemented as tools. |
 | 4 Destructive | Not implemented as tools (no Proxmox delete/power, no HA config deletion, no arbitrary shell) — denied by absence and by policy default-deny. |
 | 5 Always prohibited | Credential disclosure to agents (vault never returns secrets over HTTP), disabling auth/policy/audit/approval (no such agent-reachable route; emergency stop is admin-only and *blocks* agents), TLS/`verify_tls:false` rejection (422), SSH host-key bypass (connection refused without a trusted key), arbitrary/root shell (templates are argv allowlists, root usernames rejected), approval forging/replay (SHA-256 binding + atomic single-use consume). Each item has a demonstrating test — see `docs/IMPLEMENTATION_AUDIT.md`. |
 

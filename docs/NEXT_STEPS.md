@@ -1,87 +1,83 @@
 # Next steps — prioritized remaining work
 
-> Read with `docs/PROJECT_STATE.md`. Update priorities/statuses at the end of
-> each session. `P0` blocks a production claim; lower numbers = do sooner.
-> Verification levels per `AGENTS.md` §4.
+> Read with `docs/PROJECT_STATE.md` and `docs/AUDIT_CHECKLIST.md`. Verification
+> levels follow `AGENTS.md` §4. P0 blocks a production/live-release claim;
+> lower numbers = do sooner.
 
-## P0 — verify 0.4.1 Ingress panel & Agent Access on real Home Assistant OS (blocked: needs user's HA OS)
+## P0 — finish 0.4.2 PR, CI, and release evidence (in progress)
 
-- **Status:** Partially verified on 0.4.0 — real HA OS log confirmed the S6
-  AppArmor startup fix, schema v4 startup (`session epoch is now 1`), watchdog
-  `/healthz -> 200`, and Ingress static asset delivery (`GET /`,
-  `/static/styles.css`, `/static/app.js` → `200`), which exposed `IndexError: 4`
-  on `GET /api/admin/status` (fixed in `0.4.1`).
-- **Task:** Update the add-on from `0.4.0` to `0.4.1` on the real HA OS host
-  (and bump the `ha-addons` submodule pin if installed via `sandro-defender/ha-addons`),
-  open the panel via Ingress, confirm vault setup/unlock and Project Journal
-  load cleanly without `IndexError`, and exercise one Agent Access session
-  (issue → `/agent` redeem → one read tool → revoke).
-- **Depends on:** user authorization + access to the HA OS host. Do **not**
-  deploy without explicit approval.
-- **Acceptance criteria:**
-  - Add-on starts; `/healthz` ok; add-on log shows schema migration to v4
-    with agents/connections/credentials intact.
-  - Panel → **Project Journal** renders (empty state on first run is
-    correct); edit project state; create a task; all persist across an
-    add-on restart.
-  - An agent with `journal:read/write` + `journal_readwrite` template can
-    `GET /api/v1/journal/project-state` and record an entry; an agent
-    without the rule gets `403`.
-  - Result recorded in `docs/WORKLOG.md` and the runtime journal at level
-    `integration_verified` (or failures recorded honestly).
+- **Task:** complete the final secret/diff review, open exactly one PR from
+  `arena/a2524cd0-ha-mcp`, and require the Python, UI, packaging, and amd64
+  image/startup jobs to pass. Append actual check URLs/results to
+  `docs/WORKLOG.md`; merge and invoke the release workflow only after green.
+- **Depends on:** GitHub Actions. No duplicate PR exists at audit time.
+- **Acceptance criteria:** all required checks green on the PR head; container
+  startup smoke passes with whatever AppArmor capability the runner actually
+  has (do not infer enforcement if unavailable); version/changelog sync passes;
+  release workflow result and tag are recorded accurately.
 
-## P1 — live-target integration tests
+## P0 — install 0.4.2 on real Home Assistant OS (blocked: needs user's HA OS)
 
-- **Task:** Against lab (never production-destructive) targets: real HA REST
-  reads + one approved `ha.call_service`; real Proxmox read tools; SSH
-  `service_status`/`read_log` with enrolled host key; one MCP client
-  (e.g. Claude Desktop) end-to-end incl. `journal.*` tools.
-- **Depends on:** P0 (or any reachable test HA/PVE/SSH hosts).
-- **Acceptance criteria:** each flow executed once successfully and once in
-  its main failure mode (bad token, unknown host key, policy deny); commands
-  and results recorded in the journal (`journal.record_test_run`,
-  `integration_verified`); gaps filed as journal issues.
+- **Task:** upgrade a test/non-production HA OS installation, open the panel
+  through Ingress, dismiss the 0.4.2 notice from both Dashboard and Updates,
+  reload/restart, and verify it stays dismissed while release history remains.
+  Exercise vault unlock and one Agent Access session end to end.
+- **Depends on:** explicit user authorization and host access. Do not deploy
+  from this session without that approval.
+- **Acceptance criteria:** S6 starts under Supervisor; `/healthz` and `/readyz`
+  are healthy; no startup traceback; existing agents/connections/vault records
+  survive; dismissal persists; a genuinely new version notice reappears; a
+  temporary token is revoked by the configured restart policy while upstream
+  credentials still decrypt; results are logged as `integration_verified` or
+  failures are filed honestly.
 
-## P1 — browser and accessibility pass on the real panel
+## P1 — live-target integration tests (blocked: needs isolated lab)
 
-- **Task:** Manual pass of all 12 sections (including Agent Access) in a real browser inside HA
-  Ingress (desktop + mobile widths), keyboard-only navigation, one
-  screen-reader spot check of the Journal timeline/handoff flow.
-- **Depends on:** P0.
-- **Acceptance criteria:** no CSP console errors; focus order sane; handoff
-  copy works in the Ingress iframe (clipboard permission fallback shows if
-  blocked); findings recorded as issues or fixed with tests.
+- **Task:** against authorized lab targets, run real HA REST reads plus one
+  approved service call (including nested/broad target denial), Proxmox QEMU
+  and LXC reads, SSH service/log/template paths with an enrolled host key, and
+  one third-party MCP client on Windows or another supported host.
+- **Acceptance criteria:** each flow succeeds once and fails safely for bad
+  credentials/policy/trust; no production-destructive operation; no secret in
+  command logs; exact commands/results enter the worklog/runtime journal at
+  `integration_verified`.
 
-## P2 — journal follow-ups (only if real usage demands them)
+## P1 — real browser and accessibility pass (blocked: needs browser/Ingress)
 
-- MCP parity for `journal.list_test_runs` / `journal.list_sessions`
-  (currently REST-only; timeline covers runs).
-- Multi-project management endpoints (schema already keys by `project_id`;
-  only the seeded `default` project is reachable today).
-- Optional: export journal (JSON/Markdown) from the panel; retention policy
-  for handoffs if the table grows; deep (>200/type) merged-timeline paging
-  via keyset cursors.
-- **Acceptance criteria (each):** failing test first where practical, same
-  authorization path, docs in `docs/JOURNAL.md` updated in the same PR.
+- **Task:** desktop/mobile and keyboard-only pass over all 12 sections, one
+  screen-reader spot check, real touch/keyboard dismissal, clipboard behavior
+  inside the Ingress iframe, and the unauthenticated agent handoff page.
+- **Acceptance criteria:** no CSP/console errors, sane focus order, visible
+  failure states, no unhandled rejection, no browser-stored token; findings are
+  fixed with regressions or recorded as open issues.
 
-## P2 — container-run smoke in CI
+## P1 — aarch64 build evidence (blocked: needs builder)
 
-- **Task:** CI job that runs the built image and probes `/healthz` +
-  a journal write/read round-trip (today CI only builds `linux/amd64`).
-- **Depends on:** Docker-capable runner configuration (repo owner decision).
-- **Acceptance criteria:** job green on PRs; failure output includes
-  redacted container logs.
+- **Task:** build and start the add-on for aarch64 on a suitable builder or HA
+  OS device. Current CI builds amd64 only; architecture metadata alone is not
+  build evidence.
+- **Acceptance criteria:** image build, S6 startup, health/readiness, and one
+  vault/agent smoke pass on aarch64; record platform and AppArmor status.
 
-## P3 — independent security review
+## P2 — independent security review and fuzzing
 
-- **Task:** Third-party review of vault, auth/policy/approvals, journal
-  authorization, and redaction; track findings as journal `security` issues.
-- **Depends on:** reviewer availability/budget (owner decision).
-- **Acceptance criteria:** written findings triaged; criticals fixed with
-  regression tests before any "production-ready" claim.
+- **Task:** third-party review of vault migration/crypto, auth/policy/approval
+  races, connector target extraction, SSH path handling, redaction, and MCP
+  parsing; add malformed-input/fuzz coverage where appropriate.
+- **Depends on:** reviewer availability/budget.
+- **Acceptance criteria:** written findings triaged; critical/high issues fixed
+  with regression tests before a production-security claim.
 
-## Standing rules for whoever picks these up
+## Intentional limitations, not silently “done”
 
-- Follow `AGENTS.md` §2 (journal lifecycle) and §3 (constraints).
-- Never mark P0/P1 done from sandbox evidence — they require real
-  infrastructure by definition (`blocked_infrastructure` until run).
+- Home Assistant is REST-only; no WebSocket tool requires it.
+- Proxmox write/power/delete and arbitrary/root SSH shell tools do not exist.
+- Installation-scoped release acknowledgement is deliberate, not per-user.
+- Journal verification levels are self-reported metadata; the gateway does not
+  execute the recorded tests.
+
+## Standing rules
+
+- Never mark P0/P1 live items done from sandbox evidence.
+- Never weaken TLS, host-key checking, auth, policy, approvals, or tests to get
+  a pass. Keep upstream credentials out of logs, URLs, responses, and Git.

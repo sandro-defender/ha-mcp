@@ -425,7 +425,7 @@ class ConnectionService:
             extra = self.vault.get_secret(ca_id).value
         return ResolvedConnection(record=record, secret=secret.value, extra_secret=extra)
 
-    def agent_visible(self) -> list[dict[str, Any]]:
+    def agent_visible(self, allowed_connections: frozenset[str] | None = None) -> list[dict[str, Any]]:
         return [
             {
                 "id": record.id,
@@ -436,6 +436,7 @@ class ConnectionService:
             for record in (
                 self._row(row) for row in self.db.query_all("SELECT * FROM connections ORDER BY name")
             )
+            if allowed_connections is None or record.id in allowed_connections
         ]
 
     def connections_for_type(self, connection_type: str) -> list[ConnectionRecord]:

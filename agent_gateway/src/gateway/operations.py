@@ -262,6 +262,17 @@ class OperationService:
                 request_id=request_id,
             )
             raise PolicyDenied("agent is no longer enabled") from exc
+        if not fresh.has_scope(spec.scope):
+            self._fail_operation(operation_id, "policy_denied")
+            self._audit_denied(
+                fresh,
+                tool_name,
+                connection_id,
+                params,
+                "agent no longer has the required scope",
+                request_id,
+            )
+            raise PolicyDenied("agent no longer has the required scope")
         constraint_error = self._session_constraint(fresh, spec, connection_id)
         if constraint_error:
             self._fail_operation(operation_id, "policy_denied")
@@ -271,7 +282,7 @@ class OperationService:
             self._fail_operation(operation_id, "agent_access_disabled")
             raise EmergencyDisabled()
 
-        redecision = self._evaluate(agent, spec, connection_id, targets)
+        redecision = self._evaluate(fresh, spec, connection_id, targets)
         if not redecision.allowed:
             self._fail_operation(operation_id, "policy_denied")
             self.audit.record(
@@ -288,6 +299,20 @@ class OperationService:
                 request_id=request_id,
             )
             raise PolicyDenied("policy no longer allows this operation")
+        if redecision.require_approval and not approval_id:
+            # A read rule may gain require_approval while the request is in
+            # flight.  The operation was created before that change, so stop
+            # it and let the caller retry through the normal approval flow.
+            self._fail_operation(operation_id, "approval_required")
+            self._audit_denied(
+                fresh,
+                tool_name,
+                connection_id,
+                params,
+                "approval became required before execution",
+                request_id,
+            )
+            raise PolicyDenied("approval is required by the current policy; retry the operation")
 
         try:
             connection = self.connections.resolve(connection_id, spec.group_to_connection_type())
@@ -312,7 +337,7 @@ class OperationService:
         )
         max_output = min(redecision.limits.max_output_bytes, self.settings.get_int("max_output_bytes"))
         context = ToolContext(
-            agent=agent,
+            agent=fresh,
             connection=connection,
             filters=redecision.filters,
             excludes=redecision.excludes,

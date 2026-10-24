@@ -33,20 +33,20 @@ hosts. Nothing in the suite opens a socket to a real device.
 
 ```bash
 cd tools/ui-smoke
-npm install
+npm ci
 npm test
 ```
 
 This loads the real `index.html` and `app.js` in jsdom with a stubbed management
 API, walks every section, and asserts that the expected requests are sent and no
-runtime error occurs. It is optional, not part of CI, and no substitute for
-looking at the panel in Home Assistant.
+runtime error occurs. The CI UI job runs the same five harnesses with `npm ci`;
+they are still no substitute for looking at the panel in Home Assistant.
 
 ## Running locally
 
 ```bash
-HAG_DATA_DIR=/tmp/gateway-data HAG_ADMIN_ALLOWED_IPS=127.0.0.1 \
-HAG_REQUIRE_INGRESS_USER=0 \
+PYTHONPATH=agent_gateway/src HAG_DATA_DIR=/tmp/gateway-data \
+HAG_ADMIN_ALLOWED_IPS=127.0.0.1 HAG_REQUIRE_INGRESS_USER=0 \
   .venv/bin/python -m gateway
 ```
 
@@ -101,7 +101,7 @@ Tests live in `agent_gateway/tests/`; the root `pytest.ini` mirrors the
 
 ## Test coverage and gaps
 
-Covered (253 tests): vault crypto/lifecycle/rotation/export, corrupt-file
+Covered (354 tests): vault crypto/lifecycle/rotation/export, corrupt-file
 handling, policy evaluation and deny rules, approvals (single use, expiry,
 binding), redaction, settings parsing, the admin gate/CSRF/origin checks, body
 limits, agent auth throttling and header handling, credential and connection
@@ -109,8 +109,9 @@ validation, TLS-off rejection, Home Assistant and Proxmox VE connectors against
 mocked upstreams (including error mapping and credential non-leakage), blocked
 service domains, the full agent approval round trip over REST, MCP JSON-RPC
 sessions (initialize, tools/list, tools/call, approval shared with REST), SSH
-host-key trust, add-on packaging metadata, and static UI accessibility
-invariants.
+host-key trust, temporary agent issue/redeem/expiry/restart behavior, release
+acknowledgement and persistence, listener lifecycle, add-on packaging metadata,
+and static UI accessibility/scope invariants.
 
 | Module | Covers |
 | --- | --- |
@@ -119,7 +120,10 @@ invariants.
 | `test_approvals.py` | single use, expiry, parameter binding |
 | `test_redaction.py` | log/audit redaction |
 | `test_admin_api.py` | management routes and validation |
-| `test_agent_api.py` | auth, scopes, operations, approvals |
+| `test_agent_api.py` | auth, scopes, operations, approvals, target/connection confinement |
+| `test_agent_access.py` | temporary issue/redeem, expiry, revocation, restart epoch/policy |
+| `test_releases.py` | local release parsing, acknowledgement persistence, update transitions |
+| `test_main.py` / `test_startup.py` | listener exit status, S6/health/packaging contracts |
 | `test_connectors.py` | HA REST, Proxmox VE, TLS, error mapping |
 | `test_middleware.py` | admin gate, CSRF, body limits, throttling, headers |
 | `test_mcp.py` | JSON-RPC session, catalogue parity, tool calls |

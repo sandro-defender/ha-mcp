@@ -6,6 +6,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-10-24
+
+### Security
+- **Home Assistant service targets now fail closed.** Policy evaluation covers top-level and service-data `entity_id` values, lists, `target.entity_id`, mixed entity/area/device/floor/label selectors, and untargeted calls. Unknown or broad targets use a request-side sentinel that cannot satisfy a specific entity allow rule or bypass an entity deny rule.
+- **Authorization is revalidated with the fresh principal immediately before execution.** In-flight scope removal now denies the call, and a read policy that gains `require_approval` while a request is in flight cannot execute without a new approval flow.
+- **Proxmox LXC status uses container policy targets.** `proxmox.get_vm_status` with `kind=lxc` is evaluated against `containers` rather than `vms`, closing a cross-resource-policy mismatch.
+- **Temporary sessions can no longer read the global audit feed.** `audit:read` is reserved for persistent administrator-managed agents and is no longer offered by the temporary-access broker. The audit endpoint also enforces this boundary for legacy or altered rows.
+- **Temporary connection discovery is least-privilege.** `/api/v1/connections` now returns only the session's authorized connection IDs; persistent-agent discovery is unchanged.
+- **SQLite WAL and SHM sidecars are owner-only.** Database initialization uses a private umask and repairs `gateway.db`, `gateway.db-wal`, and `gateway.db-shm` to `0600`, matching the sensitivity of their policy, audit, and journal contents.
+
+### Fixed
+- **Post-update changelog dismissal works from both locations.** Dashboard and Updates controls refresh the real status after a successful acknowledgement, show busy state, remain visible after failed persistence, and consume already-reported request failures without an unhandled rejection. Acknowledgements remain installation-scoped and a genuinely new release is shown again.
+- **Agent-form fallback scopes use valid server IDs.** The no-status fallback now uses colon-delimited scopes instead of obsolete dotted names such as `ha.read` and `ssh.execute`.
+- **Legacy vault migration survives subsequent lock/restart.** Version-0 migration now re-wraps the DEK using the version-1 AAD instead of retaining the incompatible legacy wrapper; records remain readable after another unlock.
+- **Upstream HTTP errors no longer buffer discarded bodies.** Status classification closes the response without reading a potentially unbounded error payload; success bodies remain streamed and capped.
+- **SSH bounded output handles chunked streams correctly.** Short reads are no longer mistaken for EOF, oversized stdout fails closed, and truncated stderr is drained to avoid blocking process exit.
+- **Unexpected listener exit is a failure.** The process now returns nonzero instead of reporting success; uvicorn startup exit codes are preserved and runtime shutdown still runs.
+
+### Tests and documentation
+- Added regression coverage for every fix above, including fresh-object jsdom reproductions of the dismissal bug, authorization denial before any upstream call, restart/expiry/revocation behavior, v0 vault re-unlock, and database sidecar modes.
+- Added all five jsdom behavior harnesses to the CI UI job so the dismissal regression and Agent Access/handoff paths are enforced on every PR.
+- Added `docs/AUDIT_CHECKLIST.md` with requirement-level PASS/FIXED/PARTIAL/BLOCKED classifications and explicit unit, mocked, process, CI, and live evidence boundaries.
+- Synchronized user, security, recovery, networking, project-state, worklog, and next-step documentation with the implemented API names, scopes, file layout, and verification status.
+
+### Known limitations
+- No live Home Assistant OS, Home Assistant/Proxmox/SSH target, third-party MCP client, real browser, or independent security audit was used for this audit. Those items remain explicitly blocked or unverified in `docs/AUDIT_CHECKLIST.md`; mocked tests and health checks are not represented as live integration success.
+
 ## [0.4.1] - 2026-10-23
 
 ### Fixed

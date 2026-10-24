@@ -34,8 +34,7 @@ def health(
 def connections(
     runtime: Runtime = Depends(get_runtime), agent: AgentPrincipal = Depends(get_agent)
 ) -> dict[str, Any]:
-    _ = agent
-    return {"items": runtime.connections.agent_visible()}
+    return {"items": runtime.connections.agent_visible(agent.allowed_connections)}
 
 
 @router.get("/tools")
@@ -119,6 +118,6 @@ def audit(
     runtime: Runtime = Depends(get_runtime),
     agent: AgentPrincipal = Depends(get_agent),
 ) -> dict[str, Any]:
-    if not agent.has_scope("audit:read"):
-        raise PolicyDenied("agent lacks the audit:read scope")
+    if agent.kind != "persistent" or not agent.has_scope("audit:read"):
+        raise PolicyDenied("global audit access requires a persistent agent with the audit:read scope")
     return runtime.audit.list_events(limit=limit, offset=offset)

@@ -13,6 +13,7 @@ from ..connectors import proxmox as pve
 from ..connectors.ssh import SSHClient, SSHCredentials, render_template_argv
 from ..errors import NotFoundError, PolicyDenied, ToolUnavailable, ValidationFailure
 from ..storage.db import SettingsStore
+from ..utils import validate_entity_id
 from .models import (
     CallServiceParams,
     GetConfigParams,
@@ -262,10 +263,61 @@ def _ha_list_targets(params: ListEntitiesParams) -> dict[str, list[str]]:
     return {"domains": [params.domain]} if params.domain else {}
 
 
+def _service_entity_values(raw: Any) -> list[str]:
+    """Validate the entity_id forms accepted by Home Assistant service data."""
+
+    if isinstance(raw, str):
+        values = [raw]
+    elif isinstance(raw, list) and all(isinstance(item, str) for item in raw):
+        values = raw
+    else:
+        raise ValidationFailure("service entity_id must be a string or a list of strings")
+    if len(values) > 100:
+        raise ValidationFailure("too many service target entities")
+    try:
+        return [validate_entity_id(item) for item in values]
+    except ValueError as exc:
+        raise ValidationFailure("service target entity_id is invalid") from exc
+
+
 def _ha_service_targets(params: CallServiceParams) -> dict[str, list[str]]:
+    """Extract every HA service target before policy evaluation.
+
+    HA accepts ``entity_id`` both as a tool argument and inside service data;
+    its ``target`` object can additionally name areas/devices.  Omitting those
+    values would let a nested or broad target bypass an entity-constrained
+    policy.  ``*`` is a request-side sentinel for an unknown/broad target: a
+    wildcard allow rule may permit it, but a specific allow or deny constraint
+    fails closed.
+    """
+
     targets = {"domains": [params.domain], "ha_services": [f"{params.domain}.{params.service}"]}
+    entities: list[str] = []
     if params.entity_id:
-        targets["entities"] = [params.entity_id]
+        entities.extend(_service_entity_values(params.entity_id))
+    if "entity_id" in params.data:
+        entities.extend(_service_entity_values(params.data["entity_id"]))
+
+    # HA also accepts these target selectors at the top level of REST service
+    # data.  An allowed entity alongside one does not enumerate the full
+    # affected set, so retain the broad sentinel in mixed requests too.
+    broad_target = bool({"area_id", "device_id", "floor_id", "label_id"} & set(params.data))
+    target = params.data.get("target")
+    if target is not None:
+        if not isinstance(target, dict):
+            raise ValidationFailure("service target must be an object")
+        if "entity_id" in target:
+            entities.extend(_service_entity_values(target["entity_id"]))
+        # Area/device/other targeting can affect entities not enumerated in
+        # the request, so it remains broad even when an entity is also named.
+        if set(target) - {"entity_id"}:
+            broad_target = True
+    if not entities:
+        broad_target = True
+    if broad_target:
+        entities.append("*")
+    if entities:
+        targets["entities"] = list(dict.fromkeys(entities))
     return targets
 
 
@@ -274,7 +326,8 @@ def _pve_list_vm_targets(params: ListVmsParams) -> dict[str, list[str]]:
 
 
 def _pve_vm_targets(params: GetVmStatusParams) -> dict[str, list[str]]:
-    return {"nodes": [params.node], "vms": [str(params.vmid)]}
+    resource_family = "vms" if params.kind == "qemu" else "containers"
+    return {"nodes": [params.node], resource_family: [str(params.vmid)]}
 
 
 def _pve_task_targets(params: GetTaskStatusParams) -> dict[str, list[str]]:

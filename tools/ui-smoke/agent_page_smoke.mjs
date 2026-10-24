@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { JSDOM, VirtualConsole } from "jsdom";
-const dir = "/home/user/ha-mcp/agent_gateway/src/gateway/ui/agent";
+const repo = process.env.REPO || "/home/user/ha-mcp";
+const dir = `${repo}/agent_gateway/src/gateway/ui/agent`;
 const html = readFileSync(`${dir}/index.html`, "utf8");
 const js = readFileSync(`${dir}/agent.js`, "utf8");
 const failures = [];

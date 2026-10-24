@@ -200,7 +200,7 @@ class CredentialVault:
             self._verify_records(document, dek, legacy=legacy)
 
             if legacy:
-                document = self._migrate_legacy(document, dek)
+                document = self._migrate_legacy(document, dek, kek=kek)
                 self._write_document(document)
 
             self._dek = bytearray(dek)
@@ -485,7 +485,7 @@ class CredentialVault:
             ) from exc
         self._verify_records(document, dek, legacy=legacy)
         if legacy:
-            document = self._migrate_legacy(document, dek)
+            document = self._migrate_legacy(document, dek, kek=kek)
         # Auto-unlock depends on a key file that is not part of the export.
         document["auto_unlock"] = None
         self._touch(document)
@@ -581,16 +581,16 @@ class CredentialVault:
             if not isinstance(payload, dict) or not {"name", "kind", "value"}.issubset(payload):
                 raise VaultError("vault record is malformed", code="vault_corrupt", status=500)
 
-    def _migrate_legacy(self, document: dict[str, Any], dek: bytes) -> dict[str, Any]:
+    def _migrate_legacy(self, document: dict[str, Any], dek: bytes, *, kek: bytes) -> dict[str, Any]:
         kdf = KdfParams.from_dict(document.get("kdf"))
-        # The KEK is not available here; migration keeps the existing wrapped
-        # DEK, which is safe because the legacy wrap and the v1 wrap both
-        # authenticate the same key only after the unlock above succeeded.
+        # Version 0 encrypted the wrapper without AAD.  Re-wrap with the KEK
+        # and v1 AAD so the migrated vault can be unlocked again after lock or
+        # restart; retaining the old envelope would strand the credentials.
         migrated: dict[str, Any] = {
             "format": VAULT_FORMAT,
             "version": VAULT_VERSION,
             "kdf": kdf.to_dict(),
-            "wrapped_dek": document.get("wrapped_dek"),
+            "wrapped_dek": encrypt(kek, dek, dek_aad()),
             "auto_unlock": None,
             "records": {},
             "meta": {

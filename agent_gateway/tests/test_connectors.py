@@ -28,7 +28,7 @@ from helpers import (
 
 from gateway.api.apps import build_admin_app, build_agent_app
 from gateway.connectors.home_assistant import HARD_DENIED_SERVICE_DOMAINS, call_service
-from gateway.connectors.http import build_ssl_context, make_client
+from gateway.connectors.http import build_ssl_context, make_client, request_json
 from gateway.connectors.proxmox import SAFE_NODE_FIELDS, SAFE_VM_STATUS_FIELDS
 from gateway.errors import ConnectorError, PolicyDenied
 from gateway.runtime import Runtime
@@ -438,3 +438,45 @@ def test_connector_error_codes_are_stable() -> None:
     error = ConnectorError("upstream_timeout", "the upstream service did not respond in time", status=504)
     assert error.status == 504
     assert error.code == "upstream_timeout"
+
+
+async def test_proxmox_lxc_status_uses_container_policy_targets(runtime: Runtime, pve_setup: dict) -> None:
+    """LXC status must be authorized against containers, not QEMU VM ids."""
+
+    runtime.policies.set_policy(
+        pve_setup["agent"]["id"],
+        read_policy(
+            tools=["proxmox.get_vm_status"],
+            constraints={"nodes": ["pve1"], "containers": ["101"]},
+        ),
+    )
+    with respx.mock(assert_all_called=False) as mock, pytest.raises(PolicyDenied):
+        principal = runtime.agents.authenticate(pve_setup["token"])
+        assert principal is not None
+        await runtime.operations.execute(
+            agent=principal,
+            tool_name="proxmox.get_vm_status",
+            connection_id=pve_setup["connection"]["id"],
+            params={"node": "pve1", "vmid": 102, "kind": "lxc"},
+        )
+    assert not mock.calls
+
+
+async def test_http_error_response_body_is_not_consumed() -> None:
+    """Error classification must not buffer an unbounded upstream error body."""
+
+    class FailOnReadStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            raise AssertionError("the error response body was consumed")
+            yield b""
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, stream=FailOnReadStream())
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(ConnectorError) as excinfo:
+            await request_json(client, "GET", "https://upstream.test", max_bytes=1024)
+    finally:
+        await client.aclose()
+    assert excinfo.value.code == "upstream_error"

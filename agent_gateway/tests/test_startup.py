@@ -272,3 +272,17 @@ def test_health_and_readiness_contract_is_wired_everywhere() -> None:
 def config_watchdog() -> str:
     config = yaml.safe_load((ADDON_DIR / "config.yaml").read_text(encoding="utf-8"))
     return str(config["watchdog"])
+
+
+def test_database_wal_sidecars_are_owner_only(tmp_path) -> None:
+    from gateway.storage.db import Database
+
+    path = tmp_path / "gateway.db"
+    db = Database(path)
+    try:
+        db.execute("INSERT INTO settings(key, value, updated_at) VALUES('probe', '1', 'now')")
+        for candidate in (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
+            assert candidate.exists(), candidate
+            assert candidate.stat().st_mode & 0o077 == 0, oct(candidate.stat().st_mode & 0o777)
+    finally:
+        db.close()

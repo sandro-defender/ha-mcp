@@ -228,3 +228,50 @@ def test_corrupted_vault_file_is_detected(tmp_path: Path) -> None:
     fresh = make_vault(tmp_path)
     with pytest.raises(VaultError):
         fresh.unlock(PASSWORD)
+
+
+def test_legacy_vault_can_be_unlocked_again_after_migration(tmp_path: Path) -> None:
+    """A v0 migration must re-wrap the DEK with v1 associated data."""
+
+    import os
+
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    from gateway.vault.crypto import VAULT_FORMAT, b64encode, encode_json
+
+    def legacy_encrypt(key: bytes, plaintext: bytes) -> dict[str, str]:
+        nonce = os.urandom(12)
+        return {
+            "nonce": b64encode(nonce),
+            "ciphertext": b64encode(AESGCM(key).encrypt(nonce, plaintext, None)),
+        }
+
+    kdf = KdfParams.create(memory_cost=1024, time_cost=1, parallelism=1)
+    kek = kdf.derive(PASSWORD)
+    dek = new_key()
+    record_id = "a" * 32
+    payload = {
+        "name": "legacy token",
+        "kind": "home_assistant_token",
+        "value": {"token": "synthetic-legacy-token"},
+        "metadata": {},
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+    }
+    document = {
+        "format": VAULT_FORMAT,
+        "version": 0,
+        "kdf": kdf.to_dict(),
+        "wrapped_dek": legacy_encrypt(kek, dek),
+        "secrets": {record_id: legacy_encrypt(dek, encode_json(payload))},
+        "meta": {"created_at": "2026-01-01T00:00:00Z"},
+    }
+    path = tmp_path / "vault.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    vault = make_vault(tmp_path)
+
+    vault.unlock(PASSWORD)
+    assert vault.get_secret(record_id).value == {"token": "synthetic-legacy-token"}
+    vault.lock()
+    vault.unlock(PASSWORD)
+    assert vault.get_secret(record_id).value == {"token": "synthetic-legacy-token"}

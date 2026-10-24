@@ -60,6 +60,9 @@ HANDOFF_TTL_SECONDS = 900
 HANDOFF_MAX_TTL_SECONDS = 3600
 REDEEM_FAILURE_LIMIT = 10
 REDEEM_FAILURE_WINDOW_SECONDS = 60
+# Global audit history can contain other agents' targets and administrative
+# activity.  It is reserved for persistent, administrator-managed identities.
+TEMPORARY_SCOPES = ALLOWED_SCOPES - {"audit:read"}
 
 
 def _normalize_base_url(value: str) -> str:
@@ -273,7 +276,7 @@ class AgentAccessService:
             "connections": self.connections.list_connections(),
             "scopes": [
                 {"id": scope, "description": SCOPE_DESCRIPTIONS.get(scope, "")}
-                for scope in sorted(ALLOWED_SCOPES)
+                for scope in sorted(TEMPORARY_SCOPES)
             ],
             "last_reachability": self._last_reachability,
             "security_notes": [
@@ -300,9 +303,9 @@ class AgentAccessService:
     def _validate_scope_selection(
         self, scopes: list[str], connections: list[dict[str, Any]], operation_classes: list[str]
     ) -> None:
-        unknown = set(scopes) - ALLOWED_SCOPES
+        unknown = set(scopes) - TEMPORARY_SCOPES
         if unknown:
-            raise ValidationFailure("session contains an unknown scope")
+            raise ValidationFailure("session contains a scope that is not available to temporary agents")
         if not scopes:
             raise ValidationFailure("select at least one scope")
         classes = set(operation_classes)

@@ -76,6 +76,7 @@ async def run(runtime: Runtime, admin_app: Any, agent_app: Any) -> None:
     maintenance = asyncio.create_task(runtime.maintenance_loop(), name="maintenance")
 
     stop = asyncio.Event()
+    listener_failed = False
 
     def request_stop(*_: object) -> None:
         stop.set()
@@ -93,6 +94,7 @@ async def run(runtime: Runtime, admin_app: Any, agent_app: Any) -> None:
         else:
             for task in done:
                 if task.get_name() != "stop-event":
+                    listener_failed = True
                     logger.error("a listener exited unexpectedly")
     finally:
         for server in servers:
@@ -104,6 +106,8 @@ async def run(runtime: Runtime, admin_app: Any, agent_app: Any) -> None:
         for waiter in waiters:
             waiter.cancel()
         await asyncio.gather(*waiters, return_exceptions=True)
+    if listener_failed:
+        raise RuntimeError("listener exited unexpectedly")
 
 
 def main() -> int:
@@ -121,14 +125,23 @@ def main() -> int:
         return 1
     admin_app = build_admin_app(runtime)
     agent_app = build_agent_app(runtime)
+    exit_code = 0
     try:
         asyncio.run(run(runtime, admin_app, agent_app))
     except KeyboardInterrupt:  # pragma: no cover
         pass
+    except SystemExit as exc:
+        # uvicorn uses SystemExit(3) for a listener startup failure.  Convert
+        # it to a clean process result instead of an internal traceback.
+        exit_code = exc.code if isinstance(exc.code, int) else 1
+        logger.error("listener startup/runtime failed (exit code=%s)", exit_code)
+    except Exception as exc:
+        exit_code = 1
+        logger.error("listener startup/runtime failed: %s", exc)
     finally:
         with contextlib.suppress(Exception):
             runtime.shutdown()
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

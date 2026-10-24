@@ -66,6 +66,32 @@ def test_write_risk_always_requires_approval() -> None:
     assert decision.require_approval is True
 
 
+def test_broad_request_target_cannot_bypass_entity_deny() -> None:
+    document = {
+        "version": 1,
+        "rules": [
+            {"id": "allow", "effect": "allow", "tools": ["ha.call_service"], "connections": ["*"]},
+            {
+                "id": "deny-lock",
+                "effect": "deny",
+                "tools": ["ha.call_service"],
+                "connections": ["*"],
+                "constraints": {"entities": ["lock.front_door"]},
+            },
+        ],
+    }
+    decision = evaluate(
+        document,
+        request(
+            "ha.call_service",
+            risk="write",
+            targets={"domains": ["light"], "entities": ["*"]},
+        ),
+    )
+    assert decision.allowed is False
+    assert "deny-lock" in decision.reason
+
+
 def test_explicit_deny_rule_wins_over_allow() -> None:
     document = {
         "version": 1,

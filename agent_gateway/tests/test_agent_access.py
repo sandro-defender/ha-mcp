@@ -14,7 +14,7 @@ from typing import Any
 
 import httpx
 import pytest
-from helpers import create_connection, create_credential
+from helpers import PASSWORD, create_connection, create_credential
 
 from gateway.api.apps import build_admin_app, build_agent_app
 from gateway.runtime import Runtime
@@ -444,8 +444,13 @@ async def test_restart_revokes_temporary_sessions_and_keeps_upstream_credentials
         response = await client.get("/api/v1/health", headers={"Authorization": f"Bearer {token}"})
         assert response.status_code == 401
         assert restarted.agents.current_session_epoch() >= 1
-        # Upstream credentials survive: the vault still opens and the record is intact.
+        # Upstream credentials survive and still decrypt; only the temporary
+        # agent credential was revoked.  The value remains inside the vault.
         assert len(restarted.connections.list_connections()) == 1
+        credential_id = restarted.connections.get_connection(connection["id"]).credential_id
+        assert credential_id is not None
+        restarted.vault.unlock(PASSWORD)
+        assert restarted.vault.get_secret(credential_id).value["token"] == "upstream-secret-0"
     finally:
         await client.aclose()
         restarted.shutdown()
@@ -614,3 +619,33 @@ def test_agent_page_assets_exist_inside_the_package(path: str) -> None:
 
     name = "index.html" if path in {"/agent", "/agent/"} else path.rsplit("/", 1)[1]
     assert (AGENT_DIR / name).is_file()
+
+
+async def test_issue_rejects_global_audit_scope_for_temporary_sessions(
+    runtime: Runtime, admin_unlocked: httpx.AsyncClient
+) -> None:
+    [connection] = await _connections(runtime, admin_unlocked)
+    response = await admin_unlocked.post(
+        "/api/admin/agent-access/sessions",
+        json={
+            "name": "audit-session",
+            "scopes": ["ha:read", "audit:read"],
+            "connection_ids": [connection["id"]],
+            "operation_classes": ["read"],
+        },
+    )
+    assert response.status_code == 422, response.text
+
+
+async def test_session_catalog_hides_unauthorized_connections(
+    runtime: Runtime, admin_unlocked: httpx.AsyncClient, agent_client: httpx.AsyncClient
+) -> None:
+    allowed, other = await _connections(runtime, admin_unlocked, count=2)
+    issued = await _issue(admin_unlocked, connection_ids=[allowed["id"]])
+    redeemed = await agent_client.post("/agent/api/redeem", json={"code": _code(issued["handoff"])})
+    token = redeemed.json()["token"]
+
+    response = await agent_client.get("/api/v1/connections", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200, response.text
+    assert {item["id"] for item in response.json()["items"]} == {allowed["id"]}
+    assert other["name"] not in response.text
