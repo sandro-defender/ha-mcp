@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import logging
 import signal
+import socket
 import sys
 from typing import Any
 
@@ -65,6 +66,26 @@ def _agent_config(app: Any, settings: Settings) -> uvicorn.Config:
         ssl_certfile=str(settings.tls_certfile) if settings.tls_certfile else None,
         ssl_keyfile=str(settings.tls_keyfile) if settings.tls_keyfile else None,
     )
+
+
+def _preflight_ports(settings: Settings) -> None:
+    """Fail fast with a clean error when a listener port is already taken.
+
+    Without this probe uvicorn exits with ``SystemExit(3)`` from inside its
+    own server task and logs a raw multi-exception traceback (bind failure,
+    SystemExit chain, and a lifespan CancelledError).  Probing first keeps the
+    failure report actionable: one error line naming the listener and port,
+    then the same clean exit code and shutdown path as before.  A bind race
+    after the probe still falls through to uvicorn's own handling.
+    """
+
+    for name, port in (("ingress", settings.ingress_port), ("agent", settings.agent_port)):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            try:
+                probe.bind(("0.0.0.0", port))
+            except OSError:
+                logger.error("startup failed: %s listener port %d is already in use", name, port)
+                raise SystemExit(3) from None
 
 
 async def run(runtime: Runtime, admin_app: Any, agent_app: Any) -> None:
@@ -127,6 +148,7 @@ def main() -> int:
     agent_app = build_agent_app(runtime)
     exit_code = 0
     try:
+        _preflight_ports(settings)
         asyncio.run(run(runtime, admin_app, agent_app))
     except KeyboardInterrupt:  # pragma: no cover
         pass

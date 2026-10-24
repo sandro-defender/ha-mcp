@@ -5,6 +5,33 @@
 > Runtime detail lives in the gateway Project Journal; this file is the
 > repository-side mirror (`AGENTS.md` §2).
 
+## 2026-10-24 — Prompt #2 Phase 2: startup/lifecycle/health audit
+
+- Re-audited Dockerfile/base image/S6 `run.sh`/AppArmor/signals/shutdown
+  budget (see checklist Phase 2 rows for the full mapping). No speculative
+  permission changes: the `/init` failure chain is documented as fixed in
+  0.4.0 with build-time contract checks and static AppArmor tests; not
+  reproducible locally (no Docker/AppArmor daemon).
+- **Fixed:** port-conflict startup reporting. Live probe showed uvicorn
+  dumping a raw multi-exception traceback (bind OSError → SystemExit →
+  lifespan CancelledError) despite exiting 3 correctly. Added
+  `_preflight_ports()` in `__main__.py` (bind probe before starting servers):
+  single actionable error line, same exit code 3, clean shutdown, no
+  traceback. Regression tests `test_preflight_*` added; live re-probe
+  confirms `Traceback in output: False`, `exit: 3`.
+- **Live probes:** occupied-port → exit 3 clean; `/healthz` stays 200 while
+  `/readyz` flips 503 under emergency disable with structured checks; status/
+  health bodies secret-scanned → no password/token/key shapes; readiness
+  keys are `checks/ready/status/uptime_seconds/version`.
+- **Documented as unverifiable:** the container restart seen in the supplied
+  (not present in this session) logs — only watchdog/HEALTHCHECK mechanisms
+  are known; no cause attributed. `tls=False` is the documented correct value
+  without cert options (Supervisor terminates Ingress TLS).
+- Verification: `pytest -q` **358 passed** (2 new), startup smoke PASS,
+  mypy strict PASS, Ruff/format PASS.
+
+**Not run:** Docker/AppArmor image build locally (CI-gated), live HA OS boot.
+
 ## 2026-10-24 — Prompt #2 Phase 0/1: baseline + changelog dismissal verification and residual fix
 
 **Phase 0 (baseline):** branch `arena/d6e20eec-ha-mcp` @ `7d0de10`, clean tree,

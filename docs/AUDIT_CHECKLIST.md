@@ -43,14 +43,21 @@ after every phase.
 | Real Ingress browser confirmation | P1 | Requires HA Ingress + real browser | BLOCKED — infrastructure |
 | Regression tests | P0 | New jsdom scenario S4 (fails on pre-fix `app.js` exit 1, passes post-fix exit 18/18 checks); full suites re-run: `pytest -q` **356 passed**, all five `tools/ui-smoke` harnesses PASS, `node --check` PASS, Ruff PASS | FIXED |
 
-## Phase 2 — startup, lifecycle, and runtime health
+## Phase 2 — startup, lifecycle, and runtime health (2026-10-24)
 
 | Requirement | Priority | Evidence | Classification |
 | --- | --- | --- | --- |
-| Dockerfile/S6/permissions/signals audit | P0 | Pending | NOT TESTED |
-| `/init` permission issue status | P0 | Pending | NOT TESTED |
-| Restart cause / listeners / health semantics | P0 | Pending | NOT TESTED |
-| Secret-free logs and health responses | P0 | Pending | NOT TESTED |
+| Dockerfile/base/S6/entrypoint/permissions/users/signals audit | P0 | `ghcr.io/home-assistant/base:3.24`; `CMD ["/run.sh"]` (HA image owns `/init`); root→`su-exec app:app` drop; `S6_KILL_GRACETIME=10000`, `S6_CMD_RECEIVE_SIGNALS` deliberately unused (busybox `kill --` defect, measured on built image); SIGTERM/SIGINT → stop event → `timeout_graceful_shutdown=5` drain → `runtime.shutdown()` (vault lock + DB close); `test_startup.py`, `test_packaging.py`, startup smoke | PASS at source/process level |
+| `/init` permission error reproducible? | P0 | Fixed in 0.4.0 (AppArmor `r`+`x` on the S6 chain; `docs/STARTUP_TROUBLESHOOTING.md`); build-time contract (`test -x /init && test -r /init` + preinit/stage0), `test_apparmor_permits_s6_init_entrypoint`, live HA OS confirmation recorded for 0.4.0. Not reproducible here (no Docker/AppArmor); no speculative permission changes made | PASS at source/static level; live AppArmor CI-gated |
+| Observed container restart from supplied logs | P1 | No supplied logs exist in this session; repo contains no evidence of the restart's cause. Known restart mechanisms: Supervisor `watchdog` (`/healthz`) and image `HEALTHCHECK` (retries=3) — either restarts the whole add-on on probe failure; S6 does not restart the CMD. Documented as unverified rather than speculated | PARTIAL — cannot be attributed without the original logs |
+| Port conflict / startup failure reporting | P0 | Live probe: occupied ingress port previously exited 3 **with a raw uvicorn multi-exception traceback**; added `_preflight_ports()` → single actionable error (`startup failed: ingress listener port N is already in use`), same exit 3, clean shutdown, no traceback. Regression: `test_preflight_rejects_an_occupied_ingress_port`, `test_preflight_passes_when_ports_are_free`; live re-probe exit 3, `Traceback` absent | FIXED |
+| Config/startup failures reported distinctly | P0 | `load_settings` ConfigError → exit 2; runtime startup failure → exit 1; listener/port failure → exit 3; all logged without traceback, `/data` closed (vault locked, `gateway stopped`) | PASS — live-verified for the port-conflict path |
+| Unexpected listener exit is a failure | P0 | `tests/test_main.py::test_unexpected_listener_exit_is_a_failure` → RuntimeError; restart recovery covered by startup smoke (two cycles, same `/data`) | PASS |
+| Both listeners and documented purposes | P0 | Ingress management `:8099` (AdminGate, panel, `/api/admin`), agent REST+MCP `:8098` (bearer auth, `/mcp`); smoke socket probes on 18099/18098; `config.yaml` publishes 8098 only when configured (`null` default) | PASS |
+| Health vs readiness distinguish process from services | P0 | Live: `/healthz` stays `200 {"status":"ok"}` while `/readyz` flips to **503** under emergency disable, with structured `checks` (database/schema, vault, agent listener, ingress listener) | PASS — live-verified |
+| Logs/health/status responses do not leak secrets | P0 | `logging_utils.RedactionFilter` (rewrites messages, sanitizes exception payloads, drops uvicorn access log, quiets httpx/asyncssh); live secret scan of `/api/admin/status`, `/healthz`, `/readyz` bodies → no token/password/key shapes; `test_redaction.py` | PASS — live-verified for status/health bodies |
+| Graceful shutdown on SIGTERM | P0 | Startup smoke: SIGTERM handled, exit 0, no traceback; `test_shutdown_budget_is_configured`, `test_profile_leaves_signals_unmediated` | PASS — process level |
+| Container build/boot | P0 | Docker daemon unavailable locally; CI amd64 image + docker-smoke job must cover | BLOCKED locally / CI-gated |
 
 ## Phase 3 — automatic add-on shutdown through Supervisor
 
