@@ -20,6 +20,7 @@ from .agent import router as agent_router
 from .agent_access import router as agent_access_router
 from .agent_page import router as agent_page_router
 from .errors import register_exception_handlers
+from .ip_access import router as ip_access_router
 from .journal import admin_router as journal_admin_router
 from .journal import agent_router as journal_agent_router
 from .lifecycle import router as lifecycle_router
@@ -28,6 +29,7 @@ from .middleware import (
     AdminGateMiddleware,
     AgentAuthMiddleware,
     BodyLimitMiddleware,
+    IPAccessMiddleware,
     RequestContextMiddleware,
 )
 
@@ -57,7 +59,12 @@ def _base_app(runtime: Runtime, title: str) -> FastAPI:
 def build_admin_app(runtime: Runtime) -> FastAPI:
     app = _base_app(runtime, "Home Assistant Agent Gateway - Management")
     # Last added is outermost: request context -> access log -> body limit -> admin gate.
-    app.add_middleware(AdminGateMiddleware, settings=runtime.settings, lifecycle=runtime.lifecycle)
+    app.add_middleware(
+        AdminGateMiddleware,
+        settings=runtime.settings,
+        lifecycle=runtime.lifecycle,
+        ip_access=runtime.ip_access,
+    )
     app.add_middleware(BodyLimitMiddleware, max_bytes=runtime.settings.max_json_body_bytes)
     app.add_middleware(AccessLogMiddleware)
     app.add_middleware(RequestContextMiddleware)
@@ -65,6 +72,7 @@ def build_admin_app(runtime: Runtime) -> FastAPI:
     app.include_router(agent_access_router)
     app.include_router(journal_admin_router)
     app.include_router(lifecycle_router)
+    app.include_router(ip_access_router)
 
     @app.get("/healthz", include_in_schema=False)
     def healthz() -> dict[str, str]:
@@ -120,7 +128,9 @@ def build_agent_app(runtime: Runtime) -> FastAPI:
         limiter=runtime.rate_limiter,
         audit=runtime.audit,
         lifecycle=runtime.lifecycle,
+        ip_access=runtime.ip_access,
     )
+    app.add_middleware(IPAccessMiddleware, ip_access=runtime.ip_access)
     app.add_middleware(BodyLimitMiddleware, max_bytes=runtime.settings.mcp_max_request_bytes)
     app.add_middleware(AccessLogMiddleware)
     app.add_middleware(RequestContextMiddleware)

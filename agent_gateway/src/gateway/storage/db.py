@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -349,6 +349,30 @@ CREATE INDEX IF NOT EXISTS idx_journal_tasks_project
     ON journal_tasks(project_id, status, priority, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_journal_entries_project
     ON journal_entries(project_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS ip_rules(
+    id TEXT PRIMARY KEY,
+    action TEXT NOT NULL CHECK(action IN ('allow','deny')),
+    cidr TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL DEFAULT '',
+    UNIQUE(action, cidr)
+);
+
+CREATE TABLE IF NOT EXISTS ip_attempts(
+    id TEXT PRIMARY KEY,
+    ts TEXT NOT NULL,
+    ip TEXT NOT NULL,
+    listener TEXT NOT NULL,
+    category TEXT NOT NULL,
+    decision TEXT NOT NULL CHECK(decision IN ('allowed','denied','rate_limited')),
+    reason TEXT NOT NULL DEFAULT '',
+    agent_id TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_ip_attempts_ts ON ip_attempts(ts DESC);
+CREATE INDEX IF NOT EXISTS idx_ip_attempts_ip ON ip_attempts(ip);
+
 CREATE INDEX IF NOT EXISTS idx_journal_entries_task
     ON journal_entries(task_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_journal_decisions_project
@@ -405,6 +429,7 @@ class Database:
             self._ensure_v2_columns()
             self._ensure_v3_tables()
             self._ensure_v4_columns()
+            self._ensure_v5_tables()
             self._conn.execute(
                 "INSERT INTO schema_meta(key, value) VALUES('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
@@ -422,6 +447,7 @@ class Database:
             self._ensure_v2_columns()
             self._ensure_v3_tables()
             self._ensure_v4_columns()
+            self._ensure_v5_tables()
             self._conn.execute(
                 "INSERT OR REPLACE INTO schema_meta(key, value) VALUES('migrated_from', ?)",
                 (str(current_version),),
@@ -438,6 +464,7 @@ class Database:
             self._ensure_v2_columns()
             self._ensure_v3_tables()
             self._ensure_v4_columns()
+            self._ensure_v5_tables()
 
     def _ensure_v4_columns(self) -> None:
         """Add the temporary-session columns without touching existing rows.
@@ -506,6 +533,23 @@ class Database:
         missing = expected - present
         if missing:
             raise RuntimeError("database is missing Project Journal tables: " + ", ".join(sorted(missing)))
+
+    def _ensure_v5_tables(self) -> None:
+        """Verify the IP access tables exist (schema v5).
+
+        ``SCHEMA`` creates them on a fresh database; this guard makes an
+        upgrade fail closed with a clear error if the tables were manually
+        dropped, instead of failing later inside a request handler.
+        """
+
+        expected = {"ip_rules", "ip_attempts"}
+        rows = self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('ip_rules','ip_attempts')"
+        ).fetchall()
+        present = {str(r["name"]) for r in rows}
+        missing = expected - present
+        if missing:
+            raise RuntimeError("database is missing IP access tables: " + ", ".join(sorted(missing)))
 
     def _ensure_v2_columns(self) -> None:
         agent_cols = {str(r["name"]) for r in self._conn.execute("PRAGMA table_info(agents)").fetchall()}
@@ -601,6 +645,8 @@ class SettingsStore:
         "lifecycle_last_shutdown_at": None,
         "lifecycle_last_shutdown_result": "",
         "lifecycle_last_activity_at": None,
+        # Backend-enforced IP access policy (see gateway/ipaccess.py).
+        "ip_allowlist_mode": False,
         # Internal: invalidates every temporary session across restarts when
         # the restart policy is enabled.  Never exposed through the API.
         "session_epoch": 0,

@@ -33,6 +33,10 @@ options:
   approval_ttl_seconds: 600
   auto_shutdown_enabled: true
   auto_shutdown_timeout_minutes: 30
+  # Explicit trusted reverse proxies / Supervisor frontends whose
+  # X-Forwarded-For chain may be used to derive client IPs for IP rules.
+  # Leave empty to always use the socket peer address.
+  trusted_proxies: []
 schema:
   log_level: "list(debug|info|warning|error)"
   admin_user_ids:
@@ -43,3 +47,4 @@ schema:
   approval_ttl_seconds: "int(30,3600)"
   auto_shutdown_enabled: "bool"
   auto_shutdown_timeout_minutes: "int(5,1440)"
+  trusted_proxies: "list(str)"

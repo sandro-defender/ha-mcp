@@ -16,6 +16,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from ..audit.service import AuditService
 from ..auth.agents import AgentPrincipal, AgentService
 from ..auth.rate_limit import SlidingWindowLimiter
+from ..ipaccess import Decision, IPAccessService
 from ..lifecycle import LifecycleService
 from ..settings import Settings
 from ..storage.db import SettingsStore
@@ -185,10 +186,38 @@ class AdminGateMiddleware:
     itself; the peer address check is what makes those headers trustworthy.
     """
 
-    def __init__(self, app: ASGIApp, settings: Settings, lifecycle: LifecycleService | None = None) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        settings: Settings,
+        lifecycle: LifecycleService | None = None,
+        ip_access: IPAccessService | None = None,
+    ) -> None:
         self.app = app
         self.settings = settings
         self.lifecycle = lifecycle
+        self.ip_access = ip_access
+
+    def _record_management_denied(self, scope: Scope, reason: str) -> None:
+        """Persist a blocked management connection attempt (history only).
+
+        Management traffic is never *allowed* by IP rules — it is gated by
+        the Supervisor peer check — so only rejections are recorded here.
+        """
+
+        if self.ip_access is None:
+            return
+        peer = client_ip(scope)
+        try:
+            self.ip_access.record_attempt(
+                peer,
+                listener="management",
+                category="management_gate",
+                decision="denied",
+                reason=reason,
+            )
+        except Exception:
+            logger.debug("failed to record management attempt")
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -202,6 +231,7 @@ class AdminGateMiddleware:
         peer = client_ip(scope)
         if peer not in self.settings.admin_allowed_ips:
             logger.warning("rejected management request from untrusted peer")
+            self._record_management_denied(scope, "peer not in admin_allowed_ips")
             await _send_json(
                 send, 403, {"error": {"code": "forbidden", "message": "management access is restricted"}}
             )
@@ -211,6 +241,7 @@ class AdminGateMiddleware:
         display_name = _header(scope, b"x-remote-user-display-name") or user_id or ""
         if self.settings.require_ingress_user:
             if not user_id or not USER_ID_RE.fullmatch(user_id):
+                self._record_management_denied(scope, "missing ingress user")
                 await _send_json(
                     send,
                     401,
@@ -224,6 +255,7 @@ class AdminGateMiddleware:
                 return
             if self.settings.admin_user_ids and user_id not in self.settings.admin_user_ids:
                 logger.warning("rejected management request from non-allowlisted Home Assistant user")
+                self._record_management_denied(scope, "user not allowlisted")
                 await _send_json(
                     send,
                     403,
@@ -243,6 +275,7 @@ class AdminGateMiddleware:
 
         if scope.get("method") in UNSAFE_METHODS and path.startswith("/api/"):
             if _header(scope, b"x-gateway-request") != "1":
+                self._record_management_denied(scope, "missing request header")
                 await _send_json(
                     send,
                     403,
@@ -256,12 +289,14 @@ class AdminGateMiddleware:
                 if not _same_origin(origin, host) and not (
                     forwarded_host and _same_origin(origin, forwarded_host)
                 ):
+                    self._record_management_denied(scope, "origin rejected")
                     await _send_json(
                         send, 403, {"error": {"code": "origin_rejected", "message": "origin is not allowed"}}
                     )
                     return
             fetch_site = _header(scope, b"sec-fetch-site")
             if fetch_site and fetch_site not in {"same-origin", "none"}:
+                self._record_management_denied(scope, "cross-site request rejected")
                 await _send_json(
                     send,
                     403,
@@ -319,6 +354,112 @@ def _same_origin(origin: str, host: str) -> bool:
     return bool(host_netloc) and origin_netloc == host_netloc
 
 
+class IPAccessMiddleware:
+    """Backend IP eligibility for the agent listener, evaluated before auth.
+
+    Runs outside :class:`AgentAuthMiddleware`, so denied sources are blocked
+    before token validation, handoff redemption, REST calls, and MCP
+    execution — and the denial is recorded even when the request would also
+    have failed authentication.  Health/readiness probes are exempt (they
+    expose nothing) so container checks keep working from any address.
+    """
+
+    def __init__(self, app: ASGIApp, *, ip_access: IPAccessService) -> None:
+        self.app = app
+        self.ip_access = ip_access
+
+    @staticmethod
+    def _category(path: str) -> str:
+        if path.startswith("/mcp"):
+            return "mcp"
+        if path.startswith("/agent/api/redeem"):
+            return "handoff_redeem"
+        if path.startswith("/agent"):
+            return "agent_page"
+        if path.startswith("/api/"):
+            return "agent_api"
+        return "other"
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        if path in {"/healthz", "/readyz"}:
+            await self.app(scope, receive, send)
+            return
+
+        forwarded = [
+            value.decode("latin-1") for name, value in scope.get("headers", []) if name == b"x-forwarded-for"
+        ]
+        peer = client_ip(scope)
+        source_ip = self.ip_access.resolve_source_ip(None if peer == "unknown" else peer, forwarded)
+        scope["gateway_source_ip"] = source_ip
+
+        evaluation = self.ip_access.evaluate(source_ip)
+        if evaluation.decision == "allowed":
+            await self.app(scope, receive, send)
+            return
+
+        allowed_by_rate, retry_after = self.ip_access.limiter.check_and_record(
+            f"ipdeny:{source_ip}",
+            limit=20,
+            window_seconds=60,
+        )
+        decision: Decision = "denied" if allowed_by_rate else "rate_limited"
+        try:
+            self.ip_access.record_attempt(
+                source_ip,
+                listener="agent",
+                category=self._category(path),
+                decision=decision,
+                reason=evaluation.reason,
+            )
+        except Exception:
+            logger.debug("failed to record IP attempt")
+        if self.ip_access.audit is not None:
+            try:
+                self.ip_access.audit.record(
+                    actor_type="peer",
+                    actor_id=source_ip,
+                    tool="ip.access_denied",
+                    decision="rate_limited" if not allowed_by_rate else "deny",
+                    status="rate_limited" if not allowed_by_rate else "denied",
+                    reason=evaluation.reason,
+                    error_category="forbidden",
+                    request_id=str(_state(scope).get("request_id") or ""),
+                )
+            except Exception:
+                logger.debug("failed to record IP denial audit event")
+
+        request_id = str(_state(scope).get("request_id") or "")
+        if not allowed_by_rate:
+            await _send_json(
+                send,
+                429,
+                {
+                    "error": {
+                        "code": "rate_limited",
+                        "message": "too many blocked connection attempts",
+                        "request_id": request_id,
+                    }
+                },
+                [(b"retry-after", str(retry_after).encode())],
+            )
+            return
+        await _send_json(
+            send,
+            403,
+            {
+                "error": {
+                    "code": "ip_denied",
+                    "message": "this source address is not permitted by IP access rules",
+                    "request_id": request_id,
+                }
+            },
+        )
+
+
 #: Exact paths on the agent listener that must work before a session token
 #: exists.  Everything else (including /agent/api/session) still needs a bearer
 #: token.  These are matched exactly, never by prefix.
@@ -337,6 +478,7 @@ class AgentAuthMiddleware:
         limiter: SlidingWindowLimiter,
         audit: AuditService | None = None,
         lifecycle: LifecycleService | None = None,
+        ip_access: IPAccessService | None = None,
     ) -> None:
         self.app = app
         self.agents = agents
@@ -345,6 +487,27 @@ class AgentAuthMiddleware:
         self.limiter = limiter
         self.audit = audit
         self.lifecycle = lifecycle
+        self.ip_access = ip_access
+
+    def _source_ip(self, scope: Scope) -> str:
+        resolved = scope.get("gateway_source_ip")
+        if isinstance(resolved, str) and resolved:
+            return resolved
+        return client_ip(scope)
+
+    def _record_denied(self, scope: Scope, reason: str) -> None:
+        if self.ip_access is None:
+            return
+        try:
+            self.ip_access.record_attempt(
+                self._source_ip(scope),
+                listener="agent",
+                category="agent_auth",
+                decision="denied",
+                reason=reason,
+            )
+        except Exception:
+            logger.debug("failed to record denied attempt")
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -374,6 +537,7 @@ class AgentAuthMiddleware:
 
         query = parse_qs(scope.get("query_string", b"").decode("latin-1"), keep_blank_values=True)
         if any(key.lower() in TOKEN_QUERY_KEYS for key in query):
+            self._record_denied(scope, "bearer token in query string")
             await _send_json(
                 send,
                 400,
@@ -393,6 +557,7 @@ class AgentAuthMiddleware:
                 host.lower() not in self.settings.agent_allowed_hosts
                 and host_only not in self.settings.agent_allowed_hosts
             ):
+                self._record_denied(scope, "host not allowed")
                 await _send_json(
                     send, 421, {"error": {"code": "host_rejected", "message": "host is not allowed"}}
                 )
@@ -413,6 +578,7 @@ class AgentAuthMiddleware:
 
         origin = _header(scope, b"origin")
         if origin and origin.rstrip("/") not in self.settings.agent_allowed_origins:
+            self._record_denied(scope, "browser origin not allowed")
             await _send_json(
                 send,
                 403,
@@ -439,6 +605,7 @@ class AgentAuthMiddleware:
             return
 
         if self.settings_store.get_bool("emergency_disabled"):
+            self._record_denied(scope, "agent access disabled by administrator")
             await _send_json(
                 send,
                 503,
@@ -457,6 +624,21 @@ class AgentAuthMiddleware:
         if self.lifecycle is not None:
             self.lifecycle.record_activity("agent")
             self.lifecycle.begin_agent_request()
+        if self.ip_access is not None:
+            # Sampled (<=1/min/source) so an active agent cannot flood the
+            # history; the row carries the authenticated identity.
+            try:
+                self.ip_access.record_attempt(
+                    self._source_ip(scope),
+                    listener="agent",
+                    category=IPAccessMiddleware._category(scope.get("path", "")),
+                    decision="allowed",
+                    reason="authenticated agent request",
+                    agent_id=principal.id,
+                    sample=True,
+                )
+            except Exception:
+                logger.debug("failed to record allowed IP attempt")
         try:
             _state(scope)["agent"] = principal
             await self.app(scope, receive, send)
@@ -468,6 +650,17 @@ class AgentAuthMiddleware:
         peer = client_ip(scope)
         allowed, retry_after = self.limiter.check_and_record(f"authfail:{peer}", limit=10, window_seconds=60)
         logger.warning("agent authentication failed from %s (%s)", peer, reason)
+        if self.ip_access is not None:
+            try:
+                self.ip_access.record_attempt(
+                    self._source_ip(scope),
+                    listener="agent",
+                    category="agent_auth",
+                    decision="denied",
+                    reason=reason,
+                )
+            except Exception:
+                logger.debug("failed to record auth failure attempt")
         if self.audit is not None:
             try:
                 self.audit.record(

@@ -29,6 +29,9 @@ class Settings:
     tls_certfile: Path | None = None
     tls_keyfile: Path | None = None
     admin_allowed_ips: frozenset[str] = frozenset({"172.30.32.2"})
+    # Sources (IPs/CIDRs) whose X-Forwarded-For chain is trusted when
+    # resolving the effective client address for IP access rules.
+    trusted_proxies: tuple[str, ...] = ()
     admin_user_ids: frozenset[str] = frozenset()
     agent_allowed_origins: frozenset[str] = frozenset()
     agent_allowed_hosts: frozenset[str] = frozenset()
@@ -178,6 +181,24 @@ def load_settings(
         except OSError as exc:
             raise ConfigError("data directory is not writable") from exc
 
+    import ipaddress as _ipaddress
+
+    raw_trusted = environ.get("HAG_TRUSTED_PROXIES")
+    if raw_trusted is None:
+        raw_trusted_list = options.get("trusted_proxies", [])
+        if not isinstance(raw_trusted_list, list) or not all(
+            isinstance(item, str) for item in raw_trusted_list
+        ):
+            raise ConfigError("trusted_proxies must be a list of IP addresses or CIDR ranges")
+        trusted_list = raw_trusted_list
+    else:
+        trusted_list = [item.strip() for item in raw_trusted.split(",") if item.strip()]
+    for entry in trusted_list:
+        try:
+            _ipaddress.ip_network(entry, strict=False)
+        except ValueError as exc:
+            raise ConfigError(f"trusted_proxies entry is not a valid IP or CIDR: {entry}") from exc
+
     return Settings(
         data_dir=data_dir_path,
         log_level=log_level,
@@ -194,5 +215,6 @@ def load_settings(
         approval_ttl_seconds=approval_ttl,
         auto_shutdown_enabled=auto_shutdown_enabled,
         auto_shutdown_timeout_minutes=auto_shutdown_timeout,
+        trusted_proxies=tuple(trusted_list),
         hostname=environ.get("HAG_HOSTNAME", "agent-gateway"),
     )

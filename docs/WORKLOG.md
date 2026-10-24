@@ -5,6 +5,70 @@
 > Runtime detail lives in the gateway Project Journal; this file is the
 > repository-side mirror (`AGENTS.md` §2).
 
+## 2026-10-24 — Prompt #2 Phase 4: backend IP allowlist/denylist + connection attempts
+
+**Implemented:**
+- Schema **v5** (`storage/db.py`): `ip_rules` (UNIQUE action+cidr, CHECK constraints)
+  and `ip_attempts` tables + `_ensure_v5_tables()` fail-closed guard wired into
+  all three schema paths; `ip_allowlist_mode` settings default (False).
+- `src/gateway/ipaccess.py` — `IPAccessService`: rule CRUD with CIDR
+  validation/normalisation (bare IP → /32, `::ffff:a.b.c.d/120` → `a.b.c.d/24`),
+  evaluation (**deny beats allow**; allowlist mode requires an allow rule;
+  unidentifiable source fails closed), trusted-proxy source resolution
+  (`X-Forwarded-For` only from `trusted_proxies`; rightmost-untrusted walk;
+  malformed chain → socket peer), bounded attempt history (newest 5000 rows,
+  prune on insert batches + maintenance tick), denial rate limiting (20/60 s →
+  429), sampling of allowed rows (≤1/min/source), and automatic revocation of
+  temporary sessions recently seen from a newly denied range (48 h window,
+  token digest killed via `agents.revoke_agent`).
+- `IPAccessMiddleware` mounted **outside** `AgentAuthMiddleware` on the agent
+  listener: denies before auth/handoff/MCP, records `denied`/`rate_limited`
+  attempts + audit events, sets `gateway_source_ip` for downstream hooks;
+  health/readiness exempt. `AgentAuthMiddleware` records `agent_auth` failures
+  and sampled `allowed` rows with the authenticated agent id; token-in-query,
+  host/origin, and emergency-disabled rejections also recorded.
+  `AdminGateMiddleware` records blocked management attempts (history only —
+  IP rules deliberately do **not** apply to the management listener, so a deny
+  rule can never lock the administrator out; the Supervisor peer gate governs).
+- Admin API `api/ip_access.py`: `GET/POST /api/admin/ip/rules`,
+  `PATCH/DELETE /api/admin/ip/rules/{id}`, `PUT /api/admin/ip/settings`,
+  `GET /api/admin/ip/attempts` (pagination + filters) — management app only,
+  full Ingress gate, audit events on every mutation.
+- Add-on option `trusted_proxies: []` (`list(str)`, validated) +
+  `HAG_TRUSTED_PROXIES` env override for test rigs; `Settings.trusted_proxies`.
+- UI: 13th nav item **Access Control** + `viewIpAccess()` (enforcement card,
+  rules CRUD with edit-prefill and confirm-on-delete, attempts table with
+  decision filter/search/pagination and per-row agent revoke).
+
+**Evidence (exact results):**
+- `tests/test_ip_access.py` → **28 passed** (precedence, CIDR v4/v6, mapped-v6,
+  deny-before-auth incl. valid-token case, MCP/redeem alternate routes,
+  healthz exemption, allowlist-still-needs-credentials, 429 rate limit,
+  spoofed XFF from untrusted peer ignored, trusted-proxy chain parsing,
+  management-denied recording, pagination/filters/field sanitisation, prune,
+  revoke-on-deny with post-revoke 401, settings validation, route isolation).
+- Full suite **409 passed**; `ruff check`+`format --check` clean (81 files);
+  `mypy src` Success (59); `node --check app.js` OK; all 5 ui-smoke harnesses
+  PASS (panel_smoke +19 IP checks, 65 fetch calls, no runtime errors);
+  startup smoke PASS (run with the venv interpreter — system `python3` lacks
+  uvicorn and fails for that unrelated reason).
+- Process-level (real gateway process + real sockets): baseline agent 401 →
+  deny rule `127.0.0.1` created via management listener → agent REST/MCP
+  **403 `ip_denied`**, healthz 200, management panel still 200, history shows
+  `matched deny rule 127.0.0.1/32` on exactly the allowed fields, hammering
+  yields **429** + `rate_limited` rows, no secret shapes in responses,
+  SIGTERM exit 0, no traceback.
+
+**Decisions / limitations:**
+- IP rules govern the **agent listener only**; management access keeps its
+  separate Supervisor-peer allowlist (documented in UI + API payloads).
+- Forwarded headers parse `X-Forwarded-For` only (no RFC 7239 `Forwarded`);
+  arbitrary chains from trusted proxies are supported, everything else fails
+  safe to the socket peer. Live Docker/HA/VPN/NAT proxy semantics are a
+  documentation item for Phase 8 — no live proxy was available to test.
+- Session→IP attribution for revoke-on-deny is best-effort (48 h attempt
+  history) and only ever affects temporary sessions, never persistent agents.
+
 ## 2026-10-24 — Prompt #2 Phase 3: automatic add-on shutdown through Supervisor
 
 **Mechanism verified (official Home Assistant docs, not assumption):**

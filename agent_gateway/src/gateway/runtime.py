@@ -21,6 +21,7 @@ from .connectors.home_assistant import HARD_DENIED_SERVICE_DOMAINS, HomeAssistan
 from .connectors.proxmox import ProxmoxClient
 from .connectors.ssh import scan_host_key
 from .errors import GatewayError, NotFoundError, ValidationFailure
+from .ipaccess import IPAccessService
 from .journal.service import JournalService
 from .lifecycle import LifecycleService
 from .operations import OperationService
@@ -233,6 +234,14 @@ class Runtime:
             audit=self.audit,
             agent_access=self.agent_access,
         )
+        self.ip_access = IPAccessService(
+            db=self.db,
+            settings_store=self.settings_store,
+            trusted_proxies=list(settings.trusted_proxies),
+            audit=self.audit,
+            limiter=self.rate_limiter,
+            agents=self.agents,
+        )
         self.startup_session_policy: dict[str, Any] | None = None
         self._initialized = False
 
@@ -298,6 +307,7 @@ class Runtime:
                 self.audit.purge_old(retention)
                 self.approvals.purge_old(retention)
                 self.approvals.expire_pending()
+                self.ip_access.prune_attempts()
             except Exception:
                 logger.error("background maintenance failed")
 

@@ -75,6 +75,8 @@ def test_option_defaults_match_the_application() -> None:
     assert options["tls_keyfile"] == ""
     assert options["log_level"] == "info"
     assert options["admin_user_ids"] == []
+    assert options["trusted_proxies"] == []
+    assert defaults.trusted_proxies == ()
 
 
 def test_every_option_has_a_schema_entry() -> None:
