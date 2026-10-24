@@ -1,11 +1,101 @@
-# Complete audit checklist — 0.4.2 (2026-10-24)
+# Audit checklist — Prompt #2 session (target 0.5.0, 2026-10-24)
 
-This checklist records the current audit/fix session. Every requirement uses
-**PASS**, **FIXED**, **PARTIAL**, **MISSING**, **BLOCKED**, or **NOT TESTED**.
-`PASS` means the existing implementation was traced and applicable automated
-evidence passed; `FIXED` means a defect was reproduced and a regression now
-passes. Neither label implies live integration unless the row explicitly says
-so. Mocked upstreams and jsdom are identified as such.
+Requirement-level checklist for the complete audit/implementation pass
+(changelog fix verification, lifecycle audit, automatic Supervisor shutdown,
+IP access management, Ingress trust boundary, full feature audit, security
+verification, documentation, release). Every row uses **PASS**, **FIXED**,
+**PARTIAL**, **MISSING**, **BLOCKED**, or **NOT TESTED**, with evidence and a
+verification method. `PASS` requires recorded evidence; mocked evidence and
+jsdom evidence are labelled as such; live-infrastructure claims are only made
+when the operation actually ran in an authorized environment. Update this file
+after every phase.
+
+## Phase 0 — repository discovery and baseline (2026-10-24)
+
+| Item | Priority | Evidence | Classification |
+| --- | --- | --- | --- |
+| Branch and working tree | P0 | `arena/d6e20eec-ha-mcp` at `7d0de10` (merge of PR #10), clean tree; all work stays on this branch | PASS |
+| Current PR state | P0 | `gh pr list --state all`: PRs #1–#10 all merged, **no open PR** → exactly one new PR will be opened for this task (no duplicates) | PASS |
+| Version and release state | P0 | 0.4.2 synchronized across `config.yaml`, `pyproject.toml`, `__init__.py`, `Dockerfile`; `git tag --list` shows no releases | PASS |
+| CI/release workflows | P0 | `.github/workflows/ci.yml` (Python+jsdom+packaging+image), `release.yml`, `addon-pin-check.yml` inspected | PASS |
+| Repository instructions | P0 | `AGENTS.md` (authoritative), `AGENT.md`, `CLAUDE.md`, `docs/PROJECT_STATE.md`, `docs/NEXT_STEPS.md`, `docs/WORKLOG.md` read | PASS |
+| Prior specifications | P0 | Git history is a **shallow clone (single commit `7d0de10`)** — pre-merge commit history and PR conversation bodies beyond the repo docs cannot be retrieved locally; requirements reconstructed from `README.md`, `AGENT.md`, `docs/*`, and merged-PR titles via `gh`. Limitation recorded instead of inventing requirements | PARTIAL — documented limitation |
+| Baseline test status | P0 | `.venv/bin/pytest -q` → **356 passed**; `ruff check` + `ruff format --check` → pass (75 files); `mypy src` strict → pass (55 files); `node --check app.js` → pass | PASS |
+| Baseline UI smoke | P0 | `tools/ui-smoke`: all five harnesses pass (`changelog_smoke`, `panel_smoke`, `panel_paths`, `access_smoke`, `agent_page_smoke`) | PASS |
+| Baseline process lifecycle | P0 | `.venv/bin/python tools/startup-smoke/smoke.py` → PASS (two cycles, both listeners, Ingress/CSRF gates, SIGTERM, clean exit 0) | PASS |
+| UI-polish preservation (Prompt #1) | P0 | No design-system changes made in this phase; `design-system/` untouched | PASS |
+| Architecture map | P0 | Add-on config/Dockerfile/S6 `run.sh`/AppArmor; two ASGI listeners via `api/apps.py`; `AdminGateMiddleware` (Ingress trust) vs `AgentAuthMiddleware` (bearer); `Runtime` wires vault/policy/approvals/audit/journal/agent-access; SQLite schema v4 (`storage/db.py`); UI `ui/static` 12-section panel; tests `tests/*` + `tools/ui-smoke` + `tools/startup-smoke` | PASS |
+
+## Phase 1 — changelog dismissal
+
+| Requirement | Priority | Evidence | Classification |
+| --- | --- | --- | --- |
+| Reproduce the reported dismissal failure | P0 | Pending | NOT TESTED |
+| Root cause traced (UI → API → persistence) | P0 | Pending | NOT TESTED |
+| Fix + regression tests | P0 | Pending | NOT TESTED |
+| Release history reopen path | P1 | Pending | NOT TESTED |
+
+## Phase 2 — startup, lifecycle, and runtime health
+
+| Requirement | Priority | Evidence | Classification |
+| --- | --- | --- | --- |
+| Dockerfile/S6/permissions/signals audit | P0 | Pending | NOT TESTED |
+| `/init` permission issue status | P0 | Pending | NOT TESTED |
+| Restart cause / listeners / health semantics | P0 | Pending | NOT TESTED |
+| Secret-free logs and health responses | P0 | Pending | NOT TESTED |
+
+## Phase 3 — automatic add-on shutdown through Supervisor
+
+| Requirement | Priority | Evidence | Classification |
+| --- | --- | --- | --- |
+| Supervisor mechanism verified against official docs | P0 | Pending | NOT TESTED |
+| Settings UI (enable/timeout/manual stop/state/warnings) | P0 | Pending | NOT TESTED |
+| Inactivity definition and timer correctness | P0 | Pending | NOT TESTED |
+| Safe shutdown sequence | P0 | Pending | NOT TESTED |
+| Restart/recovery documentation | P1 | Pending | NOT TESTED |
+| Automated tests (mocked Supervisor) | P0 | Pending | NOT TESTED |
+| Live Supervisor stop | P1 | Pending | BLOCKED — no HA OS in sandbox |
+
+## Phase 4 — IP allowlist/denylist and connection attempts
+
+| Requirement | Priority | Evidence | Classification |
+| --- | --- | --- | --- |
+| Interface (rules, attempts, actions, search, bounds) | P0 | Pending | NOT TESTED |
+| Backend enforcement + precedence + CIDR/IPv4/IPv6 | P0 | Pending | NOT TESTED |
+| Trusted proxies / spoofed-header handling | P0 | Pending | NOT TESTED |
+| Administrative protections + revocation + rate limits | P0 | Pending | NOT TESTED |
+| Tests | P0 | Pending | NOT TESTED |
+
+## Phase 5 — redundant authorization inside trusted Ingress
+
+| Requirement | Priority | Evidence | Classification |
+| --- | --- | --- | --- |
+| Management routes/endpoint audit | P0 | Pending | NOT TESTED |
+| Ingress trust mechanism verification | P0 | Pending | NOT TESTED |
+| Redundant in-app authorization removed (only if safe) | P0 | Pending | NOT TESTED |
+| Direct-port/spoofing bypass regression tests | P0 | Pending | NOT TESTED |
+| Trust model documented | P1 | Pending | NOT TESTED |
+
+## Phase 6 — full product audit (6A–6K)
+
+Tracked in rows added during the phase; each of 6A–6K receives a status,
+evidence, and resolution or blocker.
+
+## Phase 7 — security and regression verification
+
+Test matrix rows are added when the suites run.
+
+## Phase 8 — documentation and operational guide
+
+Documentation rows are added when files are updated.
+
+## Phase 9 — final audit, versioning, and release
+
+Release rows are added at final verification.
+
+---
+
+## Archived — previous session checklist (0.4.2, PR #9/#10 era)
 
 ## Phase 0 — baseline and scope
 
