@@ -65,6 +65,7 @@
     ["tools", "Tools", "tools"],
     ["permissions", "Permissions", "shield"],
     ["approvals", "Approvals", "approvals"],
+    ["ipaccess", "Access Control", "shield"],
     ["audit", "Audit Log", "audit"],
     ["journal", "Project Journal", "journal"],
     ["updates", "Updates & Changelog", "refresh"],
@@ -80,6 +81,7 @@
     tools: "Tool groups and schemas — the same engine serves REST and MCP.",
     permissions: "Central policy documents, templates, and the live policy simulator.",
     approvals: "Single-use approvals bound to the exact operation, parameters, and policy revision.",
+    ipaccess: "Backend-enforced IP allowlist and denylist rules with recent connection-attempt history.",
     audit: "Searchable, filterable audit trail with redaction and retention.",
     journal: "Persistent agent work history: project state, verified evidence, failed approaches, and session handoffs.",
     updates: "Installed version, release history, migration notes, and update checks.",
@@ -655,6 +657,7 @@
       else if (route === "tools") await viewTools();
       else if (route === "permissions") await viewPermissions();
       else if (route === "approvals") await viewApprovals();
+      else if (route === "ipaccess") await viewIpAccess();
       else if (route === "audit") await viewAudit();
       else if (route === "journal") await viewJournal();
       else if (route === "updates") await viewUpdates();
@@ -682,6 +685,17 @@
 
   async function refreshStatus() {
     state.status = await api("status");
+  }
+
+  function applyAcknowledgement(summary) {
+    // `POST releases/acknowledge` returns the full release summary; mirror the
+    // notice fields into the status snapshot the dashboard renders from.
+    if (!summary || !state.status) return;
+    if (!state.status.release) state.status.release = {};
+    state.status.release.post_update_notice =
+      summary.post_update_notice || state.status.release.post_update_notice;
+    if (summary.installed_version) state.status.release.installed_version = summary.installed_version;
+    if (summary.links) state.status.release.links = summary.links;
   }
 
   /* -------------------------------------------------------------- dashboard */
@@ -825,10 +839,18 @@
     if (dismissBtn) dismissBtn.addEventListener("click", function (event) {
       withBusy(event.currentTarget, function () {
         return guarded(async function () {
-          await api("releases/acknowledge", { method: "POST", body: {} });
-          // This view renders the notice from the boot-time state.status
-          // snapshot, so acknowledge first and then refresh that snapshot.
-          await refreshStatus();
+          var summary = await api("releases/acknowledge", { method: "POST", body: {} });
+          // The acknowledgement response is the server's authoritative
+          // post-dismiss notice state: apply it to the render snapshot first
+          // so a successful dismissal disappears immediately even when the
+          // follow-up full-status refresh fails.
+          applyAcknowledgement(summary);
+          try {
+            await refreshStatus();
+          } catch (refreshError) {
+            // Dismissal already persisted; a failed status refresh must not
+            // keep the acknowledged notice on screen.
+          }
           toast("Notice dismissed.");
           await navigate("dashboard");
         });
@@ -2322,6 +2344,317 @@
     await load();
   }
 
+  /* --------------------------------------------------------- access control */
+
+  async function viewIpAccess() {
+    state.ip = state.ip || { offset: 0, limit: 25, decision: "", q: "", total: 0 };
+    const meta = await api("ip/rules");
+    const enforcement = meta.enforcement || {};
+    const trusted = (meta.trusted_proxies || []).length
+      ? (meta.trusted_proxies || []).map((entry) => `<code>${esc(entry)}</code>`).join(", ")
+      : "None — the socket peer address is always used.";
+    $("#section").innerHTML = `
+      <section class="card glass" aria-labelledby="ip-enf-title">
+        <div class="card-header">
+          <h3 id="ip-enf-title">Enforcement</h3>
+          ${meta.allowlist_mode ? badge("allowlist mode", "warn") : badge("deny rules only", "ok")}
+        </div>
+        <form class="form" id="ip-settings-form">
+          <label class="check-row">
+            <input type="checkbox" id="ip-allowlist" ${meta.allowlist_mode ? "checked" : ""}>
+            <span>Allowlist mode — only sources matching an allow rule may reach the agent API, handoff page, and MCP endpoint.</span>
+          </label>
+          <div class="button-row">
+            <button type="submit" class="button" data-variant="primary" id="ip-save-settings">
+              ${icon("check", 16)}<span>Save enforcement</span>
+            </button>
+          </div>
+        </form>
+        <dl class="detail-list">
+          <div class="detail-row"><dt>Precedence</dt><dd>${esc(enforcement.precedence || "deny wins over allow")}</dd></div>
+          <div class="detail-row"><dt>Forwarded headers</dt><dd>${esc(enforcement.forwarded_headers || "trusted proxies only")}</dd></div>
+          <div class="detail-row"><dt>Trusted proxies</dt><dd>${trusted}</dd></div>
+          <div class="detail-row"><dt>History retention</dt><dd>Newest ${esc(String(meta.attempts_max_rows || 0))} attempts</dd></div>
+        </dl>
+        <p class="card-hint">IP rules only grant network eligibility: a matching source still needs a valid agent credential, and denied sources are blocked before authentication. The management panel is never subject to these rules (Supervisor peer gate), so a deny rule cannot lock out the administrator.</p>
+      </section>
+
+      <section class="card glass mt-4" aria-labelledby="ip-rules-title">
+        <div class="card-header">
+          <h3 id="ip-rules-title">Rules <span class="card-hint" id="ip-rules-count">(${(meta.rules || []).length})</span></h3>
+          <span class="card-hint">Deny always beats allow.</span>
+        </div>
+        <form class="form" id="ip-rule-form">
+          <div class="form-row">
+            <div class="field">
+              <label for="ip-rule-action">Action</label>
+              <select id="ip-rule-action">
+                <option value="deny">Deny</option>
+                <option value="allow">Allow</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="ip-rule-cidr">IP or CIDR</label>
+              <input id="ip-rule-cidr" autocomplete="off" placeholder="203.0.113.0/24 or 2001:db8::/32" required>
+            </div>
+            <div class="field">
+              <label for="ip-rule-note">Note</label>
+              <input id="ip-rule-note" maxlength="200" placeholder="optional">
+            </div>
+          </div>
+          <input type="hidden" id="ip-rule-id" value="">
+          <div class="button-row">
+            <button type="submit" class="button" data-variant="primary" id="ip-rule-submit">${icon("plus", 16)}<span>Add rule</span></button>
+            <button type="button" class="button" data-variant="ghost" id="ip-rule-cancel" hidden>Cancel edit</button>
+          </div>
+        </form>
+        <div id="ip-rules-table"></div>
+      </section>
+
+      <section class="card glass mt-4" aria-labelledby="ip-attempts-title">
+        <div class="card-header">
+          <h3 id="ip-attempts-title">Recent connection attempts</h3>
+          <button type="button" class="button" data-size="sm" id="ip-refresh">${icon("refresh", 14)}<span>Refresh</span></button>
+        </div>
+        <form class="form" id="ip-attempt-filters">
+          <div class="form-row">
+            <div class="field">
+              <label for="ip-decision">Decision</label>
+              <select id="ip-decision">
+                <option value="">Any decision</option>
+                <option value="allowed">allowed</option>
+                <option value="denied">denied</option>
+                <option value="rate_limited">rate_limited</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="ip-q">Search</label>
+              <input id="ip-q" autocomplete="off" placeholder="IP, reason, or agent id">
+            </div>
+          </div>
+          <div class="button-row">
+            <button type="submit" class="button" data-variant="primary" id="ip-apply-filters">${icon("search", 16)}<span>Apply filters</span></button>
+          </div>
+        </form>
+        <div id="ip-attempts"></div>
+        <div class="button-row mt-2">
+          <button type="button" class="button" data-size="sm" id="ip-prev">Previous</button>
+          <span class="card-hint" id="ip-page-info"></span>
+          <button type="button" class="button" data-size="sm" id="ip-next">Next</button>
+        </div>
+      </section>`;
+
+    const decisionTone = { allowed: "ok", denied: "danger", rate_limited: "warn" };
+
+    const renderRules = (rules) => {
+      const count = $("#ip-rules-count");
+      if (count) count.textContent = `(${rules.length})`;
+      const host = $("#ip-rules-table");
+      if (!host) return;
+      if (!rules.length) {
+        host.innerHTML = emptyState(
+          "No IP rules",
+          "With allowlist mode off, sources that match no rule are allowed; a deny rule always wins over a broader allow rule.",
+          "shield"
+        );
+        return;
+      }
+      host.innerHTML = `<div class="table-wrap" role="region" aria-label="IP rules" tabindex="0"><table>
+        <caption>Deny rules block matching sources before authentication; allow rules widen eligibility only.</caption>
+        <thead><tr><th scope="col">Action</th><th scope="col">Range</th><th scope="col">Note</th><th scope="col">Added</th><th scope="col">Actions</th></tr></thead>
+        <tbody>${rules.map((rule) => `
+          <tr>
+            <td>${badge(rule.action, rule.action === "deny" ? "danger" : "ok")}</td>
+            <td><code>${esc(rule.cidr)}</code></td>
+            <td>${esc(rule.note || "—")}</td>
+            <td>${esc(fmtDate(rule.created_at))}</td>
+            <td>
+              <div class="button-row">
+                <button type="button" class="button" data-size="sm" data-ip-edit="${esc(rule.id)}">Edit</button>
+                <button type="button" class="button" data-size="sm" data-variant="danger" data-ip-remove="${esc(rule.id)}">Remove</button>
+              </div>
+            </td>
+          </tr>`).join("")}</tbody>
+      </table></div>`;
+      host.querySelectorAll("[data-ip-edit]").forEach((button) =>
+        button.addEventListener("click", () => startEdit(rules, button.dataset.ipEdit))
+      );
+      host.querySelectorAll("[data-ip-remove]").forEach((button) =>
+        button.addEventListener("click", () => removeRule(button.dataset.ipRemove))
+      );
+    };
+
+    const clearEdit = () => {
+      const form = $("#ip-rule-form");
+      if (!form) return;
+      form.reset();
+      $("#ip-rule-id").value = "";
+      const cancel = $("#ip-rule-cancel");
+      if (cancel) cancel.hidden = true;
+      const submit = $("#ip-rule-submit");
+      if (submit) submit.innerHTML = `${icon("plus", 16)}<span>Add rule</span>`;
+    };
+
+    const startEdit = (rules, ruleId) => {
+      const rule = rules.find((item) => item.id === ruleId);
+      if (!rule) return;
+      $("#ip-rule-action").value = rule.action;
+      $("#ip-rule-cidr").value = rule.cidr;
+      $("#ip-rule-note").value = rule.note || "";
+      $("#ip-rule-id").value = rule.id;
+      const cancel = $("#ip-rule-cancel");
+      if (cancel) cancel.hidden = false;
+      const submit = $("#ip-rule-submit");
+      if (submit) submit.innerHTML = `${icon("check", 16)}<span>Save changes</span>`;
+      $("#ip-rule-cidr").focus();
+    };
+
+    const removeRule = async (ruleId) => {
+      const confirmed = await confirmAction({
+        title: "Remove this IP rule?",
+        message: "The range stops being enforced immediately. Traffic it covered falls back to the default (allowlist mode decides).",
+        confirmLabel: "Remove rule",
+        variant: "danger",
+      });
+      if (!confirmed) return;
+      await guarded(async () => {
+        await api(`ip/rules/${ruleId}`, { method: "DELETE" });
+        toast("Rule removed.");
+        const fresh = await api("ip/rules");
+        renderRules(fresh.rules || []);
+      });
+    };
+
+    const loadAttempts = async () => {
+      const params = new URLSearchParams({ limit: String(state.ip.limit) });
+      if (state.ip.offset) params.set("offset", String(state.ip.offset));
+      if (state.ip.decision) params.set("decision", state.ip.decision);
+      if (state.ip.q) params.set("q", state.ip.q);
+      const data = await api(`ip/attempts?${params.toString()}`);
+      state.ip.total = data.total || 0;
+      const host = $("#ip-attempts");
+      if (!host) return;
+      const items = data.items || [];
+      if (!items.length) {
+        host.innerHTML = emptyState(
+          "No connection attempts match",
+          "Allowed, denied, and rate-limited agent attempts — plus blocked management attempts — are recorded here.",
+          "shield"
+        );
+      } else {
+        host.innerHTML = `<div class="table-wrap" role="region" aria-label="Connection attempts" tabindex="0"><table>
+          <caption>Newest ${items.length} of ${state.ip.total} recorded attempts (bounded retention, no secrets)</caption>
+          <thead><tr><th scope="col">Time</th><th scope="col">Source</th><th scope="col">Listener</th><th scope="col">Category</th><th scope="col">Decision</th><th scope="col">Reason</th><th scope="col">Agent</th></tr></thead>
+          <tbody>${items.map((row) => `<tr>
+            <td>${esc(relTime(row.ts))}</td>
+            <td><code>${esc(row.ip)}</code></td>
+            <td>${esc(row.listener)}</td>
+            <td>${esc(row.category)}</td>
+            <td>${badge(row.decision, decisionTone[row.decision] || "")}</td>
+            <td>${esc(row.reason || "—")}</td>
+            <td>${row.agent_id
+              ? `<span class="mono">${esc(String(row.agent_id).slice(0, 8))}…</span> <button type="button" class="button" data-size="sm" data-variant="danger" data-ip-revoke="${esc(row.agent_id)}">${icon("close", 12)}<span>Revoke</span></button>`
+              : "—"}</td>
+          </tr>`).join("")}</tbody>
+        </table></div>`;
+        host.querySelectorAll("[data-ip-revoke]").forEach((button) =>
+          button.addEventListener("click", () =>
+            guarded(async () => {
+              const confirmed = await confirmAction({
+                title: "Revoke this agent?",
+                message: "The token is destroyed and every future request from this agent is rejected. This cannot be undone.",
+                confirmLabel: "Revoke agent",
+                variant: "danger",
+              });
+              if (!confirmed) return;
+              await api(`agents/${button.dataset.ipRevoke}/revoke`, { method: "POST", body: {} });
+              toast("Agent revoked.");
+              await loadAttempts();
+            })
+          )
+        );
+      }
+      const info = $("#ip-page-info");
+      if (info) {
+        const from = state.ip.total ? state.ip.offset + 1 : 0;
+        const to = Math.min(state.ip.offset + state.ip.limit, state.ip.total);
+        info.textContent = `${from}–${to} of ${state.ip.total}`;
+      }
+      const prev = $("#ip-prev");
+      if (prev) prev.disabled = state.ip.offset === 0;
+      const next = $("#ip-next");
+      if (next) next.disabled = state.ip.offset + state.ip.limit >= state.ip.total;
+    };
+
+    $("#ip-settings-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      guarded(async () => {
+        await api("ip/settings", {
+          method: "PUT",
+          body: { allowlist_mode: Boolean($("#ip-allowlist").checked) },
+        });
+        toast("Enforcement settings saved.");
+      });
+    });
+
+    $("#ip-rule-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      guarded(async () => {
+        const cidr = $("#ip-rule-cidr").value.trim();
+        if (!cidr) return;
+        const ruleId = $("#ip-rule-id").value;
+        const body = {
+          action: $("#ip-rule-action").value,
+          cidr,
+          note: $("#ip-rule-note").value.trim(),
+        };
+        if (ruleId) {
+          await api(`ip/rules/${ruleId}`, { method: "PATCH", body });
+          toast("Rule updated.");
+        } else {
+          const result = await api("ip/rules", {
+            method: "POST",
+            body: { ...body, revoke_sessions: true },
+          });
+          const revoked = Array.isArray(result?.revoked_sessions) ? result.revoked_sessions.length : 0;
+          toast(revoked ? `Rule added — ${revoked} temporary session(s) revoked.` : "Rule added.");
+        }
+        clearEdit();
+        const fresh = await api("ip/rules");
+        renderRules(fresh.rules || []);
+      });
+    });
+
+    $("#ip-rule-cancel").addEventListener("click", clearEdit);
+
+    $("#ip-attempt-filters").addEventListener("submit", (event) => {
+      event.preventDefault();
+      state.ip.decision = $("#ip-decision").value;
+      state.ip.q = $("#ip-q").value.trim();
+      state.ip.offset = 0;
+      guarded(loadAttempts);
+    });
+
+    $("#ip-refresh").addEventListener("click", () => guarded(loadAttempts));
+    $("#ip-prev").addEventListener("click", () =>
+      guarded(async () => {
+        state.ip.offset = Math.max(0, state.ip.offset - state.ip.limit);
+        await loadAttempts();
+      })
+    );
+    $("#ip-next").addEventListener("click", () =>
+      guarded(async () => {
+        if (state.ip.offset + state.ip.limit < state.ip.total) {
+          state.ip.offset += state.ip.limit;
+          await loadAttempts();
+        }
+      })
+    );
+
+    renderRules(meta.rules || []);
+    await loadAttempts();
+  }
+
   /* ---------------------------------------------------------------- journal */
 
   function verificationBadge(level, verified) {
@@ -2795,9 +3128,81 @@
   /* --------------------------------------------------------------- settings */
 
   async function viewSettings() {
-    const [settingsData, vault] = await Promise.all([api("settings"), api("vault")]);
+    const [settingsData, vault, lifecycle] = await Promise.all([
+      api("settings"),
+      api("vault"),
+      api("lifecycle"),
+    ]);
     const settings = settingsData.settings;
     const vaultMeta = state.status.vault;
+    const lcRange = lifecycle.timeout_range_minutes || [5, 1440];
+    const lcRunning = lifecycle.state === "running";
+    const lcRemaining = lifecycle.inactivity_remaining_seconds;
+    const lcLast = lifecycle.last_shutdown;
+    const lifecycleCard = `
+      <section class="card glass mt-4" aria-labelledby="shutdown-title">
+        <div class="card-header">
+          <h3 id="shutdown-title">Automatic shutdown</h3>
+          ${lcRunning ? badge("running", "ok") : badge("shutting down", "warn")}
+        </div>
+        <div class="notice" ${lifecycle.enabled ? 'data-tone="warn"' : ""}>
+          ${icon("alert", 18)}
+          <div>
+            <strong>${lifecycle.enabled ? "The add-on stops itself after inactivity" : "Automatic shutdown is off"}</strong>
+            ${lifecycle.enabled
+              ? "After the inactivity timeout, the gateway asks Home Assistant to stop this add-on to save CPU and memory. The Ingress UI becomes unavailable as soon as the add-on stops."
+              : "The add-on keeps running until you stop it manually or Home Assistant does."}
+          </div>
+        </div>
+        <form class="form mt-3" id="lifecycle-form" novalidate>
+          <label class="checkbox-row">
+            <input type="checkbox" id="lc-enabled" ${lifecycle.enabled ? "checked" : ""}>
+            <span>Shut down the add-on automatically after inactivity</span>
+          </label>
+          <div class="form-row mt-2">
+            <div class="field">
+              <label for="lc-timeout">Inactivity timeout (minutes)</label>
+              <input id="lc-timeout" type="number" min="${lcRange[0]}" max="${lcRange[1]}" required
+                     value="${esc(lifecycle.timeout_minutes)}" ${lifecycle.enabled ? "" : "disabled"}>
+              <p class="field-hint">Allowed range ${lcRange[0]}–${lcRange[1]} minutes. Only authenticated agent and panel activity counts; health checks and failed logins do not.</p>
+            </div>
+          </div>
+          <div class="button-row">
+            <button type="submit" class="button" data-variant="primary" id="save-lifecycle">
+              ${icon("check", 16)}<span>Save shutdown settings</span>
+            </button>
+          </div>
+        </form>
+        <dl class="detail-list mt-3">
+          <div class="detail-row"><dt>Supervisor API</dt><dd>${
+            lifecycle.supervisor_available ? badge("available", "ok") : badge("unavailable", "warn")
+          }</dd></div>
+          <div class="detail-row"><dt>Next automatic stop</dt><dd>${
+            !lifecycle.enabled ? "disabled"
+              : lcRemaining === null || lcRemaining === undefined ? "—"
+              : `in about ${Math.max(1, Math.ceil(lcRemaining / 60))} min (no activity yet counted)`
+          }</dd></div>
+          <div class="detail-row"><dt>Last activity</dt><dd>${
+            lifecycle.last_activity_at ? `${esc(fmtDate(lifecycle.last_activity_at))} · ${esc(lifecycle.last_activity_kind || "unknown")}` : "—"
+          }</dd></div>
+          <div class="detail-row"><dt>Last shutdown</dt><dd>${
+            lcLast
+              ? `${badge(String(lcLast.result || "unknown"), lcLast.result === "accepted" ? "ok" : "warn")} ${esc(lcLast.reason || "unknown reason")} · ${esc(lcLast.at ? fmtDate(lcLast.at) : "unknown time")}`
+              : "none recorded"
+          }</dd></div>
+        </dl>
+        <div class="danger-zone mt-3">
+          <button type="button" class="button" data-variant="danger" id="shutdown-now" ${lcRunning ? "" : "disabled"}>
+            ${icon("alert", 16)}<span>${lcRunning ? "Shut down add-on now" : "Shutting down…"}</span>
+          </button>
+        </div>
+        <p class="field-hint mt-2">
+          <strong>Warning:</strong> after a shutdown the Ingress UI is unavailable until you start the add-on again from
+          Home Assistant → Settings → Add-ons → Home Assistant Agent Gateway → START. If the add-on is set to start on boot,
+          the next Home Assistant reboot starts it again (and the idle timer may stop it later).
+          With automatic shutdown enabled and start-on-boot set, expect short-lived runs after each reboot.
+        </p>
+      </section>`;
     $("#section").innerHTML = `
       <div class="grid grid-2">
         <section class="card glass" aria-labelledby="emergency-title">
@@ -2923,6 +3328,8 @@
         </section>
       </div>
 
+      ${lifecycleCard}
+
       <section class="card glass mt-4" aria-labelledby="diag-title">
         <div class="card-header"><h3 id="diag-title">Diagnostics &amp; Health</h3><span class="card-hint">redacted bundle — zero secrets</span></div>
         <div class="grid grid-2">
@@ -3040,6 +3447,71 @@
     rotateForm.addEventListener("submit", (event) => {
       event.preventDefault();
       rotateKey(rotateForm);
+    });
+
+    /* Automatic shutdown settings */
+    const lifecycleForm = $("#lifecycle-form");
+    attachBlurValidation(lifecycleForm);
+    const lcEnabled = $("#lc-enabled");
+    const lcTimeout = $("#lc-timeout");
+    lcEnabled.addEventListener("change", () => {
+      lcTimeout.disabled = !lcEnabled.checked;
+    });
+    lifecycleForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      clearErrors(lifecycleForm);
+      const timeout = Number(lcTimeout.value);
+      const errors = [];
+      if (!Number.isFinite(timeout) || timeout < lcRange[0] || timeout > lcRange[1]) {
+        errors.push({
+          fieldId: "lc-timeout",
+          message: `Enter an inactivity timeout between ${lcRange[0]} and ${lcRange[1]} minutes.`,
+        });
+      }
+      if (errors.length) {
+        showErrors(lifecycleForm, "Shutdown settings were not saved.", errors);
+        return;
+      }
+      withBusy($("#save-lifecycle"), () =>
+        guarded(async () => {
+          await api("lifecycle/settings", {
+            method: "PUT",
+            body: { enabled: lcEnabled.checked, timeout_minutes: timeout },
+          });
+          toast("Shutdown settings saved.");
+          await loadRoute("settings", { focus: false });
+        })
+      ).catch((error) => showErrors(lifecycleForm, "Shutdown settings were not saved.", [{ message: errorText(error) }]));
+    });
+
+    const shutdownBtn = $("#shutdown-now");
+    shutdownBtn.addEventListener("click", async () => {
+      const confirmed = await confirmAction({
+        title: "Shut down the add-on now?",
+        message:
+          "The gateway will ask Home Assistant to stop this add-on through the Supervisor. " +
+          "The Ingress UI becomes unavailable as soon as the add-on stops. " +
+          "Start it again from Home Assistant → Settings → Add-ons → Home Assistant Agent Gateway → START.",
+        confirmLabel: "Shut down add-on",
+        variant: "danger",
+        dangerZone: true,
+      });
+      if (!confirmed) return;
+      await withBusy(shutdownBtn, () =>
+        guarded(async () => {
+          const result = await api("lifecycle/shutdown", { method: "POST", body: {} });
+          toast(
+            result.confirmed
+              ? "Home Assistant accepted the stop request — the add-on is shutting down."
+              : "Stop requested; Home Assistant did not confirm. Check the add-on state from Home Assistant.",
+            result.confirmed ? "danger" : "warn"
+          );
+          await loadRoute("settings", { focus: false });
+        })
+      ).catch(() => {
+        // guarded() already reported the failure (rejected/unavailable/409);
+        // keep the page usable and do not create an unhandled rejection.
+      });
     });
   }
 
@@ -3667,9 +4139,16 @@
     if (ackBtn) ackBtn.addEventListener("click", function (event) {
       withBusy(event.currentTarget, function () {
         return guarded(async function () {
-          await api("releases/acknowledge", { method: "POST", body: {} });
-          // Keep the dashboard's state.status-driven notice in sync too.
-          await refreshStatus();
+          var summary = await api("releases/acknowledge", { method: "POST", body: {} });
+          // Apply the acknowledged notice to the dashboard snapshot first so
+          // a successful dismissal sticks even if the status refresh fails.
+          applyAcknowledgement(summary);
+          try {
+            await refreshStatus();
+          } catch (refreshError) {
+            // Dismissal already persisted; navigation below re-renders this
+            // view from a fresh releases fetch.
+          }
           toast("Post-update notice dismissed.");
           await navigate("updates");
         });

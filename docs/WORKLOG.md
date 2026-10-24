@@ -5,6 +5,181 @@
 > Runtime detail lives in the gateway Project Journal; this file is the
 > repository-side mirror (`AGENTS.md` §2).
 
+## 2026-10-24 — Prompt #2 Phase 4: backend IP allowlist/denylist + connection attempts
+
+**Implemented:**
+- Schema **v5** (`storage/db.py`): `ip_rules` (UNIQUE action+cidr, CHECK constraints)
+  and `ip_attempts` tables + `_ensure_v5_tables()` fail-closed guard wired into
+  all three schema paths; `ip_allowlist_mode` settings default (False).
+- `src/gateway/ipaccess.py` — `IPAccessService`: rule CRUD with CIDR
+  validation/normalisation (bare IP → /32, `::ffff:a.b.c.d/120` → `a.b.c.d/24`),
+  evaluation (**deny beats allow**; allowlist mode requires an allow rule;
+  unidentifiable source fails closed), trusted-proxy source resolution
+  (`X-Forwarded-For` only from `trusted_proxies`; rightmost-untrusted walk;
+  malformed chain → socket peer), bounded attempt history (newest 5000 rows,
+  prune on insert batches + maintenance tick), denial rate limiting (20/60 s →
+  429), sampling of allowed rows (≤1/min/source), and automatic revocation of
+  temporary sessions recently seen from a newly denied range (48 h window,
+  token digest killed via `agents.revoke_agent`).
+- `IPAccessMiddleware` mounted **outside** `AgentAuthMiddleware` on the agent
+  listener: denies before auth/handoff/MCP, records `denied`/`rate_limited`
+  attempts + audit events, sets `gateway_source_ip` for downstream hooks;
+  health/readiness exempt. `AgentAuthMiddleware` records `agent_auth` failures
+  and sampled `allowed` rows with the authenticated agent id; token-in-query,
+  host/origin, and emergency-disabled rejections also recorded.
+  `AdminGateMiddleware` records blocked management attempts (history only —
+  IP rules deliberately do **not** apply to the management listener, so a deny
+  rule can never lock the administrator out; the Supervisor peer gate governs).
+- Admin API `api/ip_access.py`: `GET/POST /api/admin/ip/rules`,
+  `PATCH/DELETE /api/admin/ip/rules/{id}`, `PUT /api/admin/ip/settings`,
+  `GET /api/admin/ip/attempts` (pagination + filters) — management app only,
+  full Ingress gate, audit events on every mutation.
+- Add-on option `trusted_proxies: []` (`list(str)`, validated) +
+  `HAG_TRUSTED_PROXIES` env override for test rigs; `Settings.trusted_proxies`.
+- UI: 13th nav item **Access Control** + `viewIpAccess()` (enforcement card,
+  rules CRUD with edit-prefill and confirm-on-delete, attempts table with
+  decision filter/search/pagination and per-row agent revoke).
+
+**Evidence (exact results):**
+- `tests/test_ip_access.py` → **28 passed** (precedence, CIDR v4/v6, mapped-v6,
+  deny-before-auth incl. valid-token case, MCP/redeem alternate routes,
+  healthz exemption, allowlist-still-needs-credentials, 429 rate limit,
+  spoofed XFF from untrusted peer ignored, trusted-proxy chain parsing,
+  management-denied recording, pagination/filters/field sanitisation, prune,
+  revoke-on-deny with post-revoke 401, settings validation, route isolation).
+- Full suite **409 passed**; `ruff check`+`format --check` clean (81 files);
+  `mypy src` Success (59); `node --check app.js` OK; all 5 ui-smoke harnesses
+  PASS (panel_smoke +19 IP checks, 65 fetch calls, no runtime errors);
+  startup smoke PASS (run with the venv interpreter — system `python3` lacks
+  uvicorn and fails for that unrelated reason).
+- Process-level (real gateway process + real sockets): baseline agent 401 →
+  deny rule `127.0.0.1` created via management listener → agent REST/MCP
+  **403 `ip_denied`**, healthz 200, management panel still 200, history shows
+  `matched deny rule 127.0.0.1/32` on exactly the allowed fields, hammering
+  yields **429** + `rate_limited` rows, no secret shapes in responses,
+  SIGTERM exit 0, no traceback.
+
+**Decisions / limitations:**
+- IP rules govern the **agent listener only**; management access keeps its
+  separate Supervisor-peer allowlist (documented in UI + API payloads).
+- Forwarded headers parse `X-Forwarded-For` only (no RFC 7239 `Forwarded`);
+  arbitrary chains from trusted proxies are supported, everything else fails
+  safe to the socket peer. Live Docker/HA/VPN/NAT proxy semantics are a
+  documentation item for Phase 8 — no live proxy was available to test.
+- Session→IP attribution for revoke-on-deny is best-effort (48 h attempt
+  history) and only ever affects temporary sessions, never persistent agents.
+
+## 2026-10-24 — Prompt #2 Phase 3: automatic add-on shutdown through Supervisor
+
+**Mechanism verified (official Home Assistant docs, not assumption):**
+`POST http://supervisor/addons/self/stop` with `Authorization: Bearer
+$SUPERVISOR_TOKEN`; self-service `/addons/self/*` endpoints are available to
+every add-on **without** `hassio_api`/role — therefore **no new add-on
+permission was requested**. Supervisor response classification implemented:
+`accepted` (2xx + result ok) / `unconfirmed` (sent, no reply — Supervisor may
+be stopping us) / `rejected` (explicit refusal) / `unavailable` (never
+reached). Unconfirmed and accepted stops arm a 30 s revert watchdog so the
+add-on never zombie-blocks agents if the container is not actually stopped.
+
+**Implemented:**
+- `src/gateway/lifecycle.py` — `LifecycleService`: documented activity policy
+  (authenticated agent + Ingress admin traffic only; health/readiness,
+  unauthenticated, failed/expired/revoked auth never reset the timer),
+  monotonic clock, single evaluation loop, one shutdown lock, bounded
+  in-flight drain, persisted shutdown metadata, configured temporary-session
+  revocation applied at shutdown, sanitized audit events
+  (`lifecycle.shutdown` / `lifecycle.shutdown_result`), failure backoff.
+- Middleware hooks: `AdminGateMiddleware` records admin activity after all
+  gate checks; `AgentAuthMiddleware` records agent activity only after full
+  authentication and blocks all agent surfaces with503 `shutting_down`
+  (before auth, so redeem/page/MCP/REST are all gated) while keeping
+  `/healthz` 200 and flipping `/readyz` 503 with `checks.lifecycle`.
+- `POST /api/admin/lifecycle/shutdown` (202 stopping/stop_requested, 409
+  duplicate, 502 rejected, 503 unavailable), `GET /api/admin/lifecycle`,
+  `PUT /api/admin/lifecycle/settings` (5–1440 min validation).
+- Add-on options `auto_shutdown_enabled` (default **true**) and
+  `auto_shutdown_timeout_minutes` (default **30**, schema `int(5,1440)`);
+  seeded into the DB until first panel edit (panel wins afterwards).
+- Settings UI card: enable/timeout form, live status (state, Supervisor
+  availability, next auto-stop, last activity, last shutdown), manual shutdown
+  with confirmation + UI-loss warning + Home Assistant START instructions +
+  boot-auto caveat.
+
+**Tests/evidence:**
+- `tests/test_lifecycle.py` → **23 passed** (respx on the real HTTP caller
+  asserts URL + `Authorization: Bearer` header + outcome classes; injected
+  caller for sequencing; token non-leakage in responses/audit/logs).
+- Process-level integration (live sandbox): real gateway process + mock
+  Supervisor HTTP server → `POST /addons/self/stop` received with the bearer
+  token; 202 confirmed; agent503/healthz200/readyz503; duplicate409; no token
+  in logs/responses.
+- jsdom: `panel_smoke` +11 lifecycle checks (render, warnings, validation,
+  PUT/POST recorded, confirm dialog content) — all pass.
+- Full suite: `pytest -q` **381 passed**; Ruff/format; strict mypy; all five
+  harnesses; startup smoke PASS; `node --check` PASS.
+
+**Not run (honest gaps):** live `POST /addons/self/stop` against a real Home
+Assistant Supervisor — **blocked** (no HA OS in this sandbox); mocked and
+process-level results must not be read as a live stop claim. Automatic-shutdown
+inactivity expiry was verified at unit level (injected clock) and settings
+validation at API level; the 5-minute minimum means no live full-timer run.
+
+## 2026-10-24 — Prompt #2 Phase 2: startup/lifecycle/health audit
+
+- Re-audited Dockerfile/base image/S6 `run.sh`/AppArmor/signals/shutdown
+  budget (see checklist Phase 2 rows for the full mapping). No speculative
+  permission changes: the `/init` failure chain is documented as fixed in
+  0.4.0 with build-time contract checks and static AppArmor tests; not
+  reproducible locally (no Docker/AppArmor daemon).
+- **Fixed:** port-conflict startup reporting. Live probe showed uvicorn
+  dumping a raw multi-exception traceback (bind OSError → SystemExit →
+  lifespan CancelledError) despite exiting 3 correctly. Added
+  `_preflight_ports()` in `__main__.py` (bind probe before starting servers):
+  single actionable error line, same exit code 3, clean shutdown, no
+  traceback. Regression tests `test_preflight_*` added; live re-probe
+  confirms `Traceback in output: False`, `exit: 3`.
+- **Live probes:** occupied-port → exit 3 clean; `/healthz` stays 200 while
+  `/readyz` flips 503 under emergency disable with structured checks; status/
+  health bodies secret-scanned → no password/token/key shapes; readiness
+  keys are `checks/ready/status/uptime_seconds/version`.
+- **Documented as unverifiable:** the container restart seen in the supplied
+  (not present in this session) logs — only watchdog/HEALTHCHECK mechanisms
+  are known; no cause attributed. `tls=False` is the documented correct value
+  without cert options (Supervisor terminates Ingress TLS).
+- Verification: `pytest -q` **358 passed** (2 new), startup smoke PASS,
+  mypy strict PASS, Ruff/format PASS.
+
+**Not run:** Docker/AppArmor image build locally (CI-gated), live HA OS boot.
+
+## 2026-10-24 — Prompt #2 Phase 0/1: baseline + changelog dismissal verification and residual fix
+
+**Phase 0 (baseline):** branch `arena/d6e20eec-ha-mcp` @ `7d0de10`, clean tree,
+version 0.4.2, no open PR → opened **PR #11** (single PR for this task) with the
+baseline comment. Shallow clone (1 commit) recorded as a history limitation.
+Baseline: `pytest -q` **356 passed**; Ruff/format/mypy strict pass; five
+jsdom harnesses pass; `tools/startup-smoke/smoke.py` PASS.
+
+**Phase 1 (changelog dismissal):**
+- Live reproduction against a real gateway process (temp data dir, real HTTP
+  on 18199/18198): fresh boot notice `show=true` → acknowledge 200 → status
+  hides it → **SIGTERM + restart keeps it hidden** → no-CSRF 403 → no
+  Ingress-user 401. The headline pre-0.4.2 bug is already fixed by PR #9 in
+  this build; backend persistence, scope, and version-transition logic are
+  correct.
+- Residual defect reproduced: both dismiss handlers awaited `refreshStatus()`
+  inside `guarded()` with no fallback, so a status-refresh failure **after a
+  successful acknowledgement** kept the banner visible and skipped navigation.
+  Evidence: `tools/ui-smoke/changelog_smoke.mjs` new S4 scenario against the
+  pre-fix `app.js` from `HEAD` → **exit 1**; fixed `app.js` → **exit 0**.
+- Fix: `applyAcknowledgement()` mirrors the acknowledge response (server
+  truth) into the render snapshot; follow-up status refresh is best-effort
+  (`try/catch`); then re-render. No CSS hiding, no removed controls.
+- Verification: changelog harness **18/18 checks**; all five harnesses PASS;
+  `pytest -q` **356 passed**; `node --check` PASS; Ruff/format PASS.
+
+**Not run (honest gaps):** real browser/keyboard/touch verification inside HA
+Ingress (no browser/Ingress in sandbox) — jsdom-level only; no live HA OS.
+
 ## 2026-10-24 — Guided agent setup, AI handoff prompt, and SSH username UX
 
 **Agent/session:** Arena coding agent, branch `arena/98324188-ha-mcp`, based on

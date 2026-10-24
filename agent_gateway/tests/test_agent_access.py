@@ -583,9 +583,9 @@ def test_session_handoffs_store_only_digests(runtime: Runtime, admin_unlocked: h
     asyncio.get_event_loop().run_until_complete(scenario())
 
 
-def test_database_schema_is_v4(runtime: Runtime) -> None:
+def test_database_schema_is_v5(runtime: Runtime) -> None:
     info = runtime.db.schema_info()
-    assert info["version"] == 4
+    assert info["version"] == 5
     columns = {row["name"] for row in runtime.db.query_all("PRAGMA table_info(agents)")}
     assert {
         "kind",
@@ -597,6 +597,11 @@ def test_database_schema_is_v4(runtime: Runtime) -> None:
         "session_epoch",
         "issued_ttl_seconds",
     } <= columns
+    # v5 adds the IP access tables.
+    tables = {
+        str(row["name"]) for row in runtime.db.query_all("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    assert {"ip_rules", "ip_attempts"} <= tables
 
 
 def test_no_plaintext_token_is_persisted(runtime: Runtime, admin_unlocked: httpx.AsyncClient) -> None:

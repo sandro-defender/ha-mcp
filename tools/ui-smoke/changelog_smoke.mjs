@@ -20,6 +20,7 @@ virtualConsole.on("error", (message) => failures.push(`console.error: ${message}
 
 const server = { installedVersion: "0.4.1", previousVersion: "0.4.0", seenVersion: "0.4.0", latestVersion: "0.4.1" };
 let ackFails = false;
+let statusFailsAfterAck = false;
 const showNotice = () => server.seenVersion !== server.installedVersion;
 
 function releaseSummary() {
@@ -95,7 +96,12 @@ function createPanel() {
       return { ok: true, status: 200, headers: { get: () => "application/json" }, json: async () => releaseSummary() };
     }
     let payload;
-    if (key === "status") payload = statusPayload();
+    if (key === "status") {
+      if (statusFailsAfterAck && calls.some((call) => call.includes("releases/acknowledge"))) {
+        return { ok: false, status: 500, headers: { get: () => "application/json" }, json: async () => ({ error: { code: "internal_error", message: "synthetic status refresh failure" }, request_id: "req-status" }) };
+      }
+      payload = statusPayload();
+    }
     else if (key === "releases") payload = releaseSummary();
     else if (key.startsWith("audit")) payload = { items: [], total: 0, limit: 8, offset: 0 };
     else return { ok: false, status: 404, headers: { get: () => "application/json" }, json: async () => ({ error: { code: "not_found", message: `no stub for ${key}` } }) };
@@ -158,6 +164,22 @@ async function run() {
     check("S3 notice still visible after failed acknowledge", noticeVisible(window));
     check("S3 no acknowledge persisted server-side", server.seenVersion !== server.installedVersion);
     check("S3 acknowledge request attempted", calls.some((call) => call.includes("releases/acknowledge")));
+  }
+  {
+    server.installedVersion = "0.7.0";
+    server.seenVersion = "0.6.0";
+    ackFails = false;
+    statusFailsAfterAck = true;
+    const { window, calls } = createPanel();
+    await tick(140);
+    check("S4 notice visible before dismiss when status refresh will fail", noticeVisible(window));
+    const unhandledBefore = failures.filter((item) => item.startsWith("unhandled")).length;
+    window.document.getElementById("dismiss-banner")?.click();
+    await tick(220);
+    check("S4 notice hidden immediately after acknowledged persistence despite status refresh failure", !noticeVisible(window));
+    check("S4 acknowledged server-side", server.seenVersion === server.installedVersion);
+    check("S4 no unhandled rejection introduced", failures.filter((item) => item.startsWith("unhandled")).length === unhandledBefore);
+    statusFailsAfterAck = false;
   }
   if (failures.length) {
     console.log("\nFAILURES:");
