@@ -105,8 +105,8 @@ python3 -m venv .venv && .venv/bin/pip install -e "agent_gateway[dev]"
 (cd agent_gateway && ../.venv/bin/mypy src)          # strict
 .venv/bin/pytest -q
 node --check agent_gateway/src/gateway/ui/static/app.js
-# optional jsdom panel harness:
-(cd tools/ui-smoke && npm install && npm test)
+# jsdom panel and handoff harnesses (also run in CI):
+(cd tools/ui-smoke && npm ci && npm test)
 ```
 
 Version is synchronized across `agent_gateway/config.yaml`,

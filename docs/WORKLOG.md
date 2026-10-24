@@ -5,6 +5,69 @@
 > Runtime detail lives in the gateway Project Journal; this file is the
 > repository-side mirror (`AGENTS.md` §2).
 
+## 2026-10-24 — Guided agent setup, AI handoff prompt, and SSH username UX
+
+**Agent/session:** Arena coding agent, branch `arena/98324188-ha-mcp`, based on
+merged PR #9 / `520c5cb`.
+
+**Request and inspection.** The user asked for agent setup that requires no
+protocol/policy knowledge and produces a prompt the AI can continue from. They
+also could not find an SSH username when storing a key. Inspection showed the
+backend already requires `SSHConfig.username` and the Connections form already
+submits it; the UI called it only "Dedicated account". No credential schema or
+migration was needed.
+
+**Implemented.**
+
+- Agent Access now opens with **Connect an AI agent**. It links to the existing
+  Credentials/Connections forms, explains the one required Supervisor Network
+  step, offers plain-language connection/read-control/lifetime choices, and
+  derives the existing HA/Proxmox/SSH scopes without changing backend policy.
+- A fresh install suggests the agent base address from the current HA hostname
+  and listener TLS/port settings. Guided submission rejects URL userinfo,
+  query/fragment and unknown paths, normalizes pasted `/agent`, `/mcp`, or
+  `/api/v1`, saves changed settings through the existing endpoint, then issues
+  through the existing single-use session endpoint.
+- The handoff dialog provides an editable/copyable AI prompt containing the
+  one-time handoff URL, MCP URL, health/tools checks, expiry, and a continuation
+  instruction. It contains placeholders rather than a redeemed bearer token,
+  is never sent automatically, and warns that the handoff code cannot be shown
+  again. Manual link redemption remains available.
+- Advanced individual-scope and access-settings forms remain in collapsed
+  sections. Both guided and advanced flows now show the one-time handoff before
+  refreshing the list, so a refresh failure cannot hide the issuance response.
+- The SSH field is explicitly **SSH username** with `autocomplete="username"`;
+  the key form explains that key and username are stored separately and points
+  to the SSH connection. Documentation now describes username as non-secret
+  connection metadata rather than vault secret material.
+
+**Security/UX decisions.** Guided read/control adds `ha:write`/`ssh:write` only
+for selected compatible connections; Proxmox remains read-only and every write
+still requires approval. No auth, policy, TLS, host-key, or connector code was
+changed. The prompt includes a live single-use handoff code by design, so every
+surface warns to share it only with the intended agent before expiry.
+
+**Verification (local).**
+
+- `.venv/bin/pytest -q` → **356 passed in 22.00s**.
+- `(cd tools/ui-smoke && npm test)` → all five harnesses passed. Agent Access
+  has 30 checks covering guided read/write scope payloads, base-address
+  normalization and persistence, prompt contents/copy, no redeemed bearer
+  token, preserved advanced issuance/revocation, and fresh-install suggestion.
+- `ruff check agent_gateway/src agent_gateway/tests`,
+  `ruff format --check agent_gateway/src agent_gateway/tests` → clean (75 files).
+- `(cd agent_gateway && ../.venv/bin/mypy src)` → clean (55 source files).
+- JavaScript syntax checks for management, agent handoff, and the changed
+  harness → clean. `git diff --check` → clean.
+
+**Environment notes / not claimed.** The fresh branch initially lacked `.venv`
+and `node_modules`; installing declared development dependencies resolved that
+setup issue. No real browser, HA OS/Supervisor, third-party AI/MCP client, or
+live SSH target was available, so visual layout, clipboard behavior in Ingress,
+actual AI self-setup, and live SSH login remain unverified. A PR and its CI are
+pending at this checkpoint; no version bump, merge, tag, release, or deployment
+has occurred for this follow-up.
+
 ## 2026-10-24 — Evidence-driven audit, security hardening, and changelog dismissal (0.4.2)
 
 **Agent/session:** Arena coding agent, branch `arena/a2524cd0-ha-mcp`.

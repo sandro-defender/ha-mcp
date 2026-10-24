@@ -1191,13 +1191,14 @@
         </div>
         <div class="form-row">
           <div class="field">
-            <label for="ssh-username">Dedicated account</label>
-            <input id="ssh-username" required autocomplete="off" placeholder="agentgw" value="${esc(config.username || "")}">
-            <p class="field-hint">Root is rejected. Prefer a dedicated account with narrow sudo rules.</p>
+            <label for="ssh-username">SSH username</label>
+            <input id="ssh-username" required autocomplete="username" placeholder="agentgw" value="${esc(config.username || "")}">
+            <p class="field-hint">The account used to log in to this host. Root is rejected; prefer a dedicated account with narrow sudo rules.</p>
           </div>
           <div class="field">
             <label for="ssh-credential">Private key credential</label>
             <select id="ssh-credential" required>${credentialOptions("ssh_private_key")}</select>
+            <p class="field-hint">Choose the key saved in Credentials. The SSH username above belongs to this connection, not to the key.</p>
           </div>
         </div>
         <div class="field">
@@ -1269,7 +1270,7 @@
       if (!Number.isInteger(port) || port < 1 || port > 65535) {
         errors.push({ fieldId: "ssh-port", message: "Port must be between 1 and 65535." });
       }
-      if (!username) errors.push({ fieldId: "ssh-username", message: "Enter the dedicated account name." });
+      if (!username) errors.push({ fieldId: "ssh-username", message: "Enter the SSH username for this host." });
       if (!credentialId) errors.push({ fieldId: "ssh-credential", message: "Select a private key credential." });
       let templates = [];
       try {
@@ -1529,7 +1530,8 @@
     if (kind === "ssh_private_key") {
       return `<div class="field">
           <label for="cred-value">Private key (PEM or OpenSSH)</label>
-          <textarea id="cred-value" data-code="true" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+          <textarea id="cred-value" data-code="true" spellcheck="false" aria-describedby="cred-key-location-hint cred-value-error" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+          <p class="field-hint" id="cred-key-location-hint"><strong>Next step:</strong> create or edit an SSH connection and enter the <strong>SSH username</strong> there. The key and username are stored separately so one key can be reused safely.</p>
           <p class="field-error" id="cred-value-error"></p>
         </div>
         ${secretField("cred-passphrase", "Key passphrase (optional)", "Leave empty if none")}`;
@@ -3207,6 +3209,67 @@
       "</div></div>";
   }
 
+  function suggestedAgentBaseUrl(settings) {
+    var listener = settings.listener || {};
+    var host = window.location.hostname || "homeassistant.local";
+    if (host.indexOf(":") !== -1 && host.charAt(0) !== "[") host = "[" + host + "]";
+    return (listener.tls ? "https" : "http") + "://" + host + ":" + (listener.port || 8098);
+  }
+
+  function guidedAccessScopes(types, allowWrite) {
+    var scopes = [];
+    function add(scope) { if (scopes.indexOf(scope) === -1) scopes.push(scope); }
+    types.forEach(function (type) {
+      if (type === "home_assistant") {
+        add("ha:read");
+        if (allowWrite) add("ha:write");
+      } else if (type === "proxmox") {
+        add("proxmox:read");
+      } else if (type === "ssh") {
+        add("ssh:read");
+        if (allowWrite) add("ssh:write");
+      }
+    });
+    return scopes;
+  }
+
+  function guidedDurationChoices(minMinutes, defaultMinutes, maxMinutes) {
+    var values = [60, 240, 1440, defaultMinutes].filter(function (minutes, index, all) {
+      return minutes >= minMinutes && minutes <= maxMinutes && all.indexOf(minutes) === index;
+    });
+    if (!values.length) values.push(defaultMinutes);
+    return values.sort(function (a, b) { return a - b; });
+  }
+
+  function agentSetupPrompt(result) {
+    var handoff = result.handoff || {};
+    var config = result.connection_config || {};
+    var session = result.session || {};
+    var url = handoff.url || "";
+    var mcpUrl = config.mcp_url || "";
+    var apiBase = config.api_base || "";
+    if (!/^https?:\/\//i.test(url) || !/^https?:\/\//i.test(mcpUrl) || !apiBase) return "";
+    var scopes = session.scopes || [];
+    var canWrite = scopes.some(function (scope) { return /:write$/.test(scope); });
+    return [
+      "Connect to my Home Assistant Agent Gateway, then continue as my infrastructure assistant.",
+      "",
+      "1. Open this single-use handoff link in a browser to redeem it:",
+      url,
+      "The link expires at " + (handoff.expires_at || "the time shown on the agent page") + ". Treat the link and the resulting session token as private. Do not print, log, commit, or share them elsewhere.",
+      "2. The agent page shows the session token once. Configure your MCP client for Streamable HTTP with:",
+      "URL: " + mcpUrl,
+      "Authorization: Bearer <session token from the agent page>",
+      "3. Verify the connection before claiming success:",
+      "GET " + apiBase + "/health",
+      "GET " + apiBase + "/tools",
+      "Use the same Authorization header for both checks. Never put the token in a URL.",
+      "4. Once connected, summarize the available connections and tools. This session is " + (canWrite ? "read/control; writes may require my approval in Home Assistant" : "read-only") + ". Then ask me what you should do next.",
+      "Session: " + (session.name || "temporary agent") + ". Session access expires at " + (session.expires_at || "the time shown on the agent page") + ".",
+      "If you cannot open links or configure MCP yourself, stop and tell me the exact manual step you need. Do not claim the connection succeeded until the health and tools checks pass.",
+    ].join("\n");
+  }
+
   async function viewAgentAccess() {
     var data = await api("agent-access");
     var settings = data.settings || {};
@@ -3218,12 +3281,14 @@
     var minMinutes = Math.round((settings.min_ttl_seconds || 300) / 60);
     var defaultMinutes = Math.round((settings.default_ttl_seconds || 3600) / 60);
     var maxHours = Math.round((settings.max_ttl_seconds || 86400) / 3600);
+    var suggestedBaseUrl = baseUrl || suggestedAgentBaseUrl(settings);
+    var durationChoices = guidedDurationChoices(minMinutes, defaultMinutes, maxHours * 60);
 
     var warning = "";
     if (!baseUrl) {
       warning = '<div class="notice" data-tone="warn">' + icon("alert", 18) +
-        "<div><strong>Set the agent API base URL</strong>The handoff link must point at the agent listener, not the Home Assistant Ingress address. " +
-        "Configure it below, for example <span class=\"code-hint\">http://homeassistant.local:8098</span>.</div></div>";
+        "<div><strong>Confirm the agent connection address</strong>We suggested one from this Home Assistant hostname. " +
+        "Publish the Agent API on port 8098 in the add-on Network settings, then adjust the address below if your agent uses another LAN or VPN name.</div></div>";
     }
 
     var reachable = endpoints.listener_reachable
@@ -3237,7 +3302,32 @@
       '<div class="detail-row"><dt>MCP endpoint</dt><dd class="mono">' + esc((baseUrl || "<gateway>") + "/mcp") + "</dd></div>" +
       '<div class="detail-row"><dt>REST base</dt><dd class="mono">' + esc((baseUrl || "<gateway>") + "/api/v1") + "</dd></div></div>";
 
-    var form = '<section class="card glass" aria-labelledby="issue-session-title"><div class="card-header"><h3 id="issue-session-title">Generate temporary access</h3>' + badge("single-use handoff", "info") + "</div>" +
+    var guided = '<section class="card glass" aria-labelledby="guided-access-title"><div class="card-header"><h3 id="guided-access-title">Connect an AI agent</h3>' + badge("guided setup", "info") + '</div>' +
+      '<p class="card-hint">Choose what the agent may use. The gateway selects the permissions, creates a single-use handoff, and prepares a prompt you can paste into your AI. No MCP or policy knowledge is needed.</p>' +
+      warning +
+      '<ol class="security-list">' +
+      '<li><strong>Prepare a connection.</strong> Store the upstream credential, create its connection, and use Test. <div class="button-row mt-2"><button type="button" class="button" data-size="sm" id="guide-open-credentials">' + icon("key", 14) + '<span>Open Credentials</span></button><button type="button" class="button" data-size="sm" id="guide-open-connections">' + icon("connections", 14) + '<span>Open Connections</span></button></div></li>' +
+      '<li><strong>Allow your agent computer to reach the gateway.</strong> In Home Assistant, open this add-on’s Configuration → Network and publish Agent API as port 8098 on your trusted LAN or VPN. Do not expose it to the public internet.</li>' +
+      '<li><strong>Create access and paste the prompt.</strong> The prompt contains a short-lived, single-use setup link. Share it only with the intended AI agent.</li>' +
+      '</ol>' +
+      '<form class="form mt-3" id="guide-form" novalidate>' +
+      '<div class="form-row"><div class="field"><label for="guide-name">Name this agent</label><input id="guide-name" required maxlength="64" autocomplete="off" value="My AI agent"><p class="field-error" id="guide-name-error"></p></div>' +
+      '<div class="field"><label for="guide-ttl">How long should access last?</label><select id="guide-ttl">' + durationChoices.map(function (minutes) {
+        return '<option value="' + minutes + '"' + (minutes === defaultMinutes ? ' selected' : '') + '>' + esc(fmtDuration(minutes * 60)) + '</option>';
+      }).join("") + '</select><p class="field-hint">You can revoke access at any time.</p><p class="field-error" id="guide-ttl-error"></p></div></div>' +
+      '<fieldset class="field plain-fieldset"><legend class="field-label mb-2">What can the agent access?</legend><div class="chip-row" id="guide-connections">' +
+      (connections.length ? connections.map(function (c) {
+        var selected = connections.length === 1;
+        return '<label class="chip" data-selected="' + selected + '"><input type="checkbox" value="' + esc(c.id) + '" data-connection-type="' + esc(c.type) + '"' + (selected ? ' checked' : '') + '><span>' + esc(c.name) + ' <span class="mono">' + esc(CONNECTION_LABELS[c.type] || c.type) + '</span></span></label>';
+      }).join("") : '<p class="field-hint">No connections yet. Use Open Connections above, then return here.</p>') +
+      '</div><p class="field-error" id="guide-connections-error"></p></fieldset>' +
+      '<div class="form-row"><div class="field"><label for="guide-mode">What can it do?</label><select id="guide-mode"><option value="read">Read only (recommended)</option><option value="write">Read and control</option></select><p class="field-hint">Control applies to Home Assistant and allowed SSH templates. Every write needs your approval; Proxmox stays read-only.</p></div>' +
+      '<div class="field"><label for="guide-base-url">Agent connection address</label><input id="guide-base-url" required maxlength="300" autocomplete="off" value="' + esc(suggestedBaseUrl) + '"><p class="field-hint">Suggested from this Home Assistant hostname. Enter the address the agent computer can reach; the gateway adds the correct paths.</p><p class="field-error" id="guide-base-url-error"></p></div></div>' +
+      '<label class="check-row"><input type="checkbox" id="guide-revoke-previous" checked> <span>Replace existing temporary sessions when this one is created</span></label>' +
+      '<div class="button-row"><button type="submit" class="button" data-variant="primary" id="guide-generate"' + (connections.length ? '' : ' disabled') + '>' + icon("key", 16) + '<span>Create access and AI prompt</span></button></div>' +
+      '</form></section>';
+
+    var form = '<details class="card glass"><summary class="list-item-top" data-role="summary-action"><span class="list-item-title">Advanced: choose individual scopes</span></summary><section aria-labelledby="issue-session-title"><div class="card-header"><h3 id="issue-session-title">Generate temporary access</h3>' + badge("single-use handoff", "info") + "</div>" +
       '<p class="card-hint">The agent receives the session token on the agent page, never in the link itself. The link contains a one-time code and expires quickly.</p>' +
       warning +
       '<form class="form" id="access-form" novalidate>' +
@@ -3266,9 +3356,9 @@
       '<label class="check-row"><input type="checkbox" id="access-revoke-previous" checked> <span>Revoke all previous temporary sessions when this one is generated</span></label>' +
       '<div class="button-row"><button type="submit" class="button" data-variant="primary" id="access-generate">' + icon("key", 16) + "<span>Generate access link</span></button>" +
       '<button type="button" class="button" data-variant="danger" id="access-revoke-all" data-danger-zone="true">' + icon("close", 16) + "<span>Revoke all sessions</span></button></div>" +
-      "</form></section>";
+      "</form></section></details>";
 
-    var settingsForm = '<section class="card glass" aria-labelledby="access-settings-title"><div class="card-header"><h3 id="access-settings-title">Agent access settings</h3></div>' +
+    var settingsForm = '<details class="card glass"><summary class="list-item-top" data-role="summary-action"><span class="list-item-title">Advanced access settings</span></summary><section aria-labelledby="access-settings-title"><div class="card-header"><h3 id="access-settings-title">Agent access settings</h3></div>' +
       '<form class="form" id="access-settings-form" novalidate><div class="form-row">' +
       '<div class="field"><label for="access-default-ttl">Default lifetime (minutes)</label><input id="access-default-ttl" type="number" min="' + minMinutes + '" max="' + maxHours * 60 + '" value="' + defaultMinutes + '"></div>' +
       '<div class="field"><label for="access-max-ttl">Maximum lifetime (hours)</label><input id="access-max-ttl" type="number" min="' + Math.ceil(minMinutes / 60) + '" max="' + maxHours + '" value="' + maxHours + '"></div>' +
@@ -3278,9 +3368,9 @@
       '<p class="field-hint">Externally reachable address of the agent listener (port 8098). No path, query, or credentials. Used for handoff links.</p></div>' +
       '<label class="check-row"><input type="checkbox" id="access-restart-revoke"' + (settings.revoke_on_restart ? " checked" : "") + '> <span>Revoke every temporary session when the gateway restarts</span></label>' +
       '<p class="field-hint">Revocation never rotates or deletes upstream Home Assistant, Proxmox, or SSH credentials.</p>' +
-      '<div class="button-row"><button type="submit" class="button" id="access-save-settings">Save settings</button></div></form></section>';
+      '<div class="button-row"><button type="submit" class="button" id="access-save-settings">Save settings</button></div></form></section></details>';
 
-    $("#section").innerHTML = warning + form + settingsForm +
+    $("#section").innerHTML = guided + form + settingsForm +
       '<section class="card glass" aria-labelledby="access-status-title"><div class="card-header"><h3 id="access-status-title">Listener and limits</h3>' +
       reachable + "</div>" + settingSummary +
       '<div class="detail-list mt-2"><div class="detail-row"><dt>Listener probe</dt><dd>' + esc(endpoints.detail || "not checked") +
@@ -3294,7 +3384,7 @@
       '<section aria-labelledby="access-sessions-title"><div class="card-header"><h3 id="access-sessions-title">Sessions</h3>' + badge(String(sessions.length) + " total", "muted") + "</div>" +
       '<div class="list mt-2">' + (sessions.length ? sessions.map(accessSessionCard).join("") : emptyState("No temporary sessions", "Generate a handoff link when an agent needs temporary access. Destructive operations are never granted.", "key")) + "</div></section>";
 
-    $$("#access-connections .chip, #access-scopes .chip, #access-classes .chip").forEach(function (chip) {
+    $$("#guide-connections .chip, #access-connections .chip, #access-scopes .chip, #access-classes .chip").forEach(function (chip) {
       var input = $("input", chip);
       var sync = function () {
         chip.dataset.selected = String(input.checked);
@@ -3306,6 +3396,13 @@
         }
       });
       input.addEventListener("change", sync);
+    });
+
+    $("#guide-open-credentials").addEventListener("click", function () { navigate("credentials"); });
+    $("#guide-open-connections").addEventListener("click", function () { navigate("connections"); });
+    $("#guide-form").addEventListener("submit", function (event) {
+      event.preventDefault();
+      issueGuidedAgentSession();
     });
 
     var formEl = $("#access-form");
@@ -3327,6 +3424,70 @@
     });
     $$("[data-session-activity]").forEach(function (button) {
       button.addEventListener("click", function () { openSessionActivity(button.dataset.sessionActivity); });
+    });
+  }
+
+  async function issueGuidedAgentSession() {
+    var selected = $$("#guide-connections input:checked");
+    var connectionIds = selected.map(function (input) { return input.value; });
+    var types = selected.map(function (input) { return input.dataset.connectionType; });
+    var allowWrite = $("#guide-mode").value === "write";
+    var scopes = guidedAccessScopes(types, allowWrite);
+    var classes = ["read"];
+    if (scopes.some(function (scope) { return scope === "ha:write" || scope === "ssh:write"; })) classes.push("write");
+    var name = $("#guide-name").value.trim();
+    var ttl = parseInt($("#guide-ttl").value, 10) * 60;
+    var baseUrl = $("#guide-base-url").value.trim().replace(/\/+$/, "");
+    var problems = [];
+    if (!name || name.length < 3) problems.push({ fieldId: "guide-name", message: "Enter a name for this agent." });
+    if (!connectionIds.length) problems.push({ fieldId: "guide-connections", message: "Choose at least one connection." });
+    if (!scopes.length) problems.push({ fieldId: "guide-connections", message: "The selected connections do not provide any agent capabilities." });
+    try {
+      var parsed = new URL(baseUrl);
+      if (["http:", "https:"].indexOf(parsed.protocol) === -1 || parsed.username || parsed.password || parsed.search || parsed.hash) {
+        throw new Error("unsupported address");
+      }
+      var knownPath = parsed.pathname.replace(/\/+$/, "");
+      if (["/agent", "/mcp", "/api/v1"].indexOf(knownPath) !== -1) {
+        parsed.pathname = "";
+        baseUrl = parsed.toString().replace(/\/+$/, "");
+      } else if (knownPath && knownPath !== "/") {
+        throw new Error("unexpected path");
+      }
+    } catch {
+      problems.push({ fieldId: "guide-base-url", message: "Enter an http(s) address without credentials, query, or fragment. You may paste an address ending in /agent, /mcp, or /api/v1; those paths are removed automatically." });
+    }
+    if (!baseUrl) problems.push({ fieldId: "guide-base-url", message: "Enter the address the agent computer can reach." });
+    if (!isFinite(ttl) || ttl < 300) problems.push({ fieldId: "guide-ttl", message: "Choose a valid access duration." });
+    problems.forEach(function (problem) {
+      var node = $("#" + problem.fieldId + "-error");
+      if (node) node.textContent = problem.message;
+    });
+    if (problems.length) {
+      toast("Complete the highlighted guided setup steps.", "danger");
+      return;
+    }
+    $("#guide-base-url").value = baseUrl;
+    var body = {
+      name: name,
+      scopes: scopes,
+      connection_ids: connectionIds,
+      operation_classes: classes,
+      ttl_seconds: ttl,
+      revoke_previous: $("#guide-revoke-previous").checked,
+      notes: "Created with guided agent setup",
+    };
+    await withBusy($("#guide-generate"), function () {
+      return guarded(async function () {
+        if (baseUrl !== $("#access-base-url").value.trim()) {
+          await api("agent-access/settings", { method: "PUT", body: { agent_api_base_url: baseUrl } });
+        }
+        var result = await api("agent-access/sessions", { method: "POST", body: body });
+        showHandoff(result);
+        await loadRoute("access");
+      });
+    }).catch(function (error) {
+      toast(errorText(error), "danger");
     });
   }
 
@@ -3361,8 +3522,8 @@
     await withBusy($("#access-generate"), function () {
       return guarded(async function () {
         var result = await api("agent-access/sessions", { method: "POST", body: body });
-        await loadRoute("access");
         showHandoff(result);
+        await loadRoute("access");
       });
     }).catch(function (error) {
       toast(errorText(error), "danger");
@@ -3374,24 +3535,36 @@
     var session = result.session || {};
     var url = handoff.url || "";
     var configured = /^https?:\/\//i.test(url);
+    var prompt = agentSetupPrompt(result);
     openModal({
-      title: "Agent access link",
+      title: "Agent setup is ready",
       body: '<div class="notice" data-tone="info">' + icon("key", 18) +
-        "<div><strong>One-time handoff link</strong>It contains a single-use code, not the token. Open it in the agent's browser; the agent page shows the token once and confirms the session scope.</div></div>" +
+        "<div><strong>Your AI can take it from here</strong>Copy the prompt below into the intended AI agent. It contains a single-use handoff link, not the token. The agent page reveals the token once after the link is redeemed. Copy the prompt now; the handoff code cannot be shown again after this dialog closes. Nothing is sent to an AI automatically.</div></div>" +
         '<p class="field-hint">Session <strong>' + esc(session.name || "") + "</strong> · expires " + esc(fmtDate(session.expires_at)) + "</p>" +
-        '<div class="token-box" id="handoff-value">' + esc(url || "no base URL configured") + "</div>" +
+        '<div class="field"><label for="agent-setup-prompt">Prompt for your AI agent</label>' +
+        '<textarea id="agent-setup-prompt" class="journal-prompt mono" rows="14" spellcheck="false" aria-describedby="agent-setup-prompt-hint">' + esc(prompt) + '</textarea>' +
+        '<p class="field-hint" id="agent-setup-prompt-hint">Review or edit before copying. The prompt includes the one-time link, so share it only with the intended agent before ' + esc(fmtDate(handoff.expires_at)) + '.</p></div>' +
+        (!prompt ? '<p class="field-error">Set an absolute agent connection address and generate access again to create a portable AI prompt.</p>' : "") +
+        '<div class="button-row mt-2"><button type="button" class="button" data-variant="primary" data-size="sm" id="handoff-copy-prompt"' + (!prompt ? ' disabled' : '') + '>' + icon("copy", 14) + '<span>Copy AI setup prompt</span></button></div>' +
+        '<details class="mt-3"><summary>Manual alternative: use the handoff link yourself</summary>' +
+        '<div class="token-box mt-2" id="handoff-value">' + esc(url || "no base URL configured") + "</div>" +
         (!configured ? '<p class="field-error">Make the handoff link absolute by setting the agent API base URL in Agent access settings. A relative link only works on the agent listener.</p>' : "") +
         '<div class="button-row mt-2">' +
         '<button type="button" class="button" data-size="sm" id="handoff-copy">' + icon("copy", 14) + "<span>Copy link</span></button>" +
         (configured ? '<a class="button" data-size="sm" href="' + esc(url) + '" target="_blank" rel="noreferrer noopener" id="handoff-open">Open agent page</a>' : "") +
-        "</div>" +
-        '<p class="field-hint mt-2">The link expires at ' + esc(fmtDate(handoff.expires_at)) + " and can be redeemed once. If it expires unused, generate a new session.</p>",
+        '</div><p class="field-hint mt-2">The link can be redeemed once. If it expires unused, generate a new session.</p></details>',
       actions: [{ label: "Done", variant: "primary", onClick: closeModal }],
       onMount: function () {
         var button = $("#handoff-copy");
         if (button) button.addEventListener("click", async function () {
           try { await navigator.clipboard.writeText(url); toast("Handoff link copied."); }
           catch { toast("Clipboard access was denied. Select the link and copy it manually.", "danger"); }
+        });
+        var promptButton = $("#handoff-copy-prompt");
+        if (promptButton) promptButton.addEventListener("click", async function () {
+          var field = $("#agent-setup-prompt");
+          try { await navigator.clipboard.writeText(field.value); toast("AI setup prompt copied. Paste it into the intended agent."); }
+          catch { field.focus(); field.select(); toast("Clipboard unavailable; the prompt is selected for manual copy.", "danger"); }
         });
       },
     });

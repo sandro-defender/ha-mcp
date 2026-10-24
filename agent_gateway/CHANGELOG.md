@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Guided AI agent setup in Agent Access.** Plain-language connection, read/control, lifetime, and address choices derive the existing scopes automatically. A fresh install suggests the agent address from the Home Assistant hostname; pasted `/agent`, `/mcp`, or `/api/v1` paths are normalized before saving.
+- **Copyable AI setup prompt.** The handoff dialog now prepares an editable prompt containing the single-use handoff link, MCP details, verification steps, and continuation instructions. It never contains an upstream credential or redeemed bearer token, is never sent automatically, and retains a manual-link alternative.
+
+### Fixed
+- **SSH username is discoverable.** The Connections form now labels the existing field explicitly as **SSH username**, and the private-key credential form explains that the username belongs to the separate SSH connection.
+- **One-time handoff survives session-list refresh failures.** Guided and advanced issuance now display the handoff before refreshing Agent Access, so a subsequent refresh error cannot hide the only issuance response.
+
 ## [0.4.2] - 2026-10-24
 
 ### Security

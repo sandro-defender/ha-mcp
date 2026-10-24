@@ -4,17 +4,18 @@
 > levels follow `AGENTS.md` §4. P0 blocks a production/live-release claim;
 > lower numbers = do sooner.
 
-## P0 — finish 0.4.2 PR, CI, and release evidence (in progress)
+## Current — guided agent-setup UI PR and CI (in progress)
 
-- **Task:** complete the final secret/diff review, open exactly one PR from
-  `arena/a2524cd0-ha-mcp`, and require the Python, UI, packaging, and amd64
-  image/startup jobs to pass. Append actual check URLs/results to
-  `docs/WORKLOG.md`; merge and invoke the release workflow only after green.
-- **Depends on:** GitHub Actions. No duplicate PR exists at audit time.
-- **Acceptance criteria:** all required checks green on the PR head; container
-  startup smoke passes with whatever AppArmor capability the runner actually
-  has (do not infer enforcement if unavailable); version/changelog sync passes;
-  release workflow result and tag are recorded accurately.
+- **Task:** complete the final secret/diff review and open one PR from
+  `arena/98324188-ha-mcp` for the guided Agent Access flow, AI setup prompt,
+  and SSH username guidance. Require Python, UI, packaging, and amd64
+  image/startup checks. PR #9 / 0.4.2 already merged as `520c5cb`; do not
+  duplicate it.
+- **Depends on:** GitHub Actions. Runtime/package version remains 0.4.2 with
+  changes recorded under Unreleased unless a separate release decision is made.
+- **Acceptance criteria:** all required checks green on the PR head; the jsdom
+  guided-scope/prompt checks run in CI; no real-browser or live AI-client claim
+  is inferred from them.
 
 ## P0 — install 0.4.2 on real Home Assistant OS (blocked: needs user's HA OS)
 

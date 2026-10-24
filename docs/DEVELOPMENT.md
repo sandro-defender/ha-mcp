@@ -101,7 +101,7 @@ Tests live in `agent_gateway/tests/`; the root `pytest.ini` mirrors the
 
 ## Test coverage and gaps
 
-Covered (354 tests): vault crypto/lifecycle/rotation/export, corrupt-file
+Covered (356 tests): vault crypto/lifecycle/rotation/export, corrupt-file
 handling, policy evaluation and deny rules, approvals (single use, expiry,
 binding), redaction, settings parsing, the admin gate/CSRF/origin checks, body
 limits, agent auth throttling and header handling, credential and connection

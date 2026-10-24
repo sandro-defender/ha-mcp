@@ -6,12 +6,12 @@
 > Journal (`docs/JOURNAL.md`).
 
 - **Last updated:** 2026-10-24 by Arena coding agent (session
-  `arena/a2524cd0-ha-mcp`)
-- **Branch:** `arena/a2524cd0-ha-mcp`, based on `25c5c6b` / 0.4.1
-- **Version:** 0.4.2, synchronized in config, pyproject, Dockerfile, package
-  version, and both byte-identical changelogs
-- **PR/release:** no suitable open PR or existing tag/release was found. One PR
-  is to be opened from this branch; merge/release remains gated on required CI.
+  `arena/98324188-ha-mcp`)
+- **Branch:** `arena/98324188-ha-mcp`, based on `520c5cb` (merged PR #9)
+- **Version:** 0.4.2 plus Unreleased guided-agent-setup UI changes; runtime/package
+  versions were not bumped for this UI-only follow-up
+- **PR/release:** PR #9 was merged with all required checks green. The current
+  guided-setup change has no PR yet and must pass its own CI before merge.
 
 ## Purpose and architecture
 
@@ -23,7 +23,28 @@ single-use handoffs, parameter-bound approvals, redacted SQLite audit and
 Project Journal data, and two listeners: Ingress management `:8099` and agent
 REST+MCP `:8098`, sharing one `Runtime`, `PolicyService`, and audit path.
 
-## Current audit result
+## Current guided-setup change
+
+Agent Access now defaults to **Connect an AI agent**: users choose connections,
+read-only or read/control, a lifetime, and a suggested connection address. The
+UI derives the existing scopes, saves/normalizes the address, issues the same
+single-use temporary session, and presents an editable/copyable AI setup prompt
+with MCP details, health/tools verification, and continuation instructions. The
+prompt contains only the handoff code and placeholders—not upstream credentials
+or a redeemed bearer token—and is never sent automatically. Advanced scope and
+settings forms remain available. Handoff display now happens before the session
+list refresh so a refresh error cannot hide the one-time response.
+
+SSH already had a required `config.username`; no backend schema change was
+needed. The UI now calls it **SSH username** and the private-key credential form
+explains that the username belongs to the separate SSH connection.
+
+Verification: **356 passed in 22.00s**, all five jsdom harnesses (including 30
+Agent Access checks), Ruff, format, strict mypy, and JavaScript syntax all pass.
+No real browser, live HA OS, third-party AI client, or live SSH integration was
+available; those remain unverified.
+
+## Historical 0.4.2 audit result
 
 The P0 changelog-dismissal defect and eleven additional reliability/security
 defects were reproduced or directly demonstrated, fixed, and covered by
@@ -61,9 +82,9 @@ TESTED classifications are in `docs/AUDIT_CHECKLIST.md`.
 
 ## In progress / blocked
 
-- **PR CI and container evidence:** pending at this checkpoint. Local Docker
-  and AppArmor tools are unavailable, so no local container/AppArmor success is
-  claimed. The GitHub Actions `image` job is the required build/startup gate.
+- **PR CI and container evidence:** PR #9 passed all four required jobs and was
+  merged as `520c5cb`. The current guided-setup change still needs its own PR
+  CI. Local Docker/AppArmor remain unavailable in this sandbox.
 - **Live deployment and integrations:** no HA OS/Supervisor, live Home
   Assistant/Proxmox/SSH target, third-party MCP client, or real browser was
   available. These remain `blocked_infrastructure`, not PASS.
@@ -104,6 +125,6 @@ TESTED classifications are in `docs/AUDIT_CHECKLIST.md`.
 
 ## Next tasks
 
-See `docs/NEXT_STEPS.md`. Immediate sequence: final secret/diff review, one PR,
-required CI (especially container startup), then merge/release only if green.
-Live HA OS and lab verification remain separate follow-up work.
+See `docs/NEXT_STEPS.md`. Immediate sequence for this branch: final secret/diff
+review, one guided-setup PR, and required CI before any merge. Live HA OS, real
+browser/AI-client, and lab verification remain separate follow-up work.

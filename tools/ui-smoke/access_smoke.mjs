@@ -33,7 +33,7 @@ const session = {
 
 const overview = {
   settings: { default_ttl_seconds: 3600, max_ttl_seconds: 86400, min_ttl_seconds: 300, hard_max_ttl_seconds: 604800,
-    handoff_ttl_seconds: 900, revoke_on_restart: true, agent_api_base_url: "http://ha.local:8098",
+    handoff_ttl_seconds: 900, revoke_on_restart: true, agent_api_base_url: "http://saved.local:8098",
     mcp_path: "/mcp", api_prefix: "/api/v1", agent_page_path: "/agent", transport: "streamable-http",
     listener: { host: "0.0.0.0", port: 8098, tls: false } },
   sessions: [session], active_count: 0, pending_count: 1,
@@ -47,9 +47,9 @@ const overview = {
 };
 
 const issued = {
-  session: { ...session, id: "c".repeat(32) },
+  session: { ...session, id: "c".repeat(32), scopes: ["ha:read", "ha:write"], operation_classes: ["read", "write"] },
   handoff: { url: "http://ha.local:8098/agent#code=hag_h_" + "z".repeat(43), expires_at: now, single_use: true },
-  connection_config: { agent_page_url: "http://ha.local:8098/agent", mcp_url: "http://ha.local:8098/mcp", notes: [] },
+  connection_config: { agent_page_url: "http://ha.local:8098/agent", api_base: "http://ha.local:8098/api/v1", mcp_url: "http://ha.local:8098/mcp", notes: [] },
   policy: { document: { version: 1, rules: [] } },
   settings: overview.settings,
 };
@@ -77,8 +77,15 @@ const { window } = dom;
 window.addEventListener("error", (e) => failures.push("window.error: " + e.message));
 window.addEventListener("unhandledrejection", (e) => failures.push("unhandled: " + e.reason));
 const calls = [];
+const requests = [];
+let clipboard = "";
+Object.defineProperty(window.navigator, "clipboard", { configurable: true, value: { writeText: async (value) => { clipboard = value; } } });
 window.fetch = async (url, options = {}) => {
   calls.push(`${options.method || "GET"} ${url}`);
+  requests.push({ url: String(url), method: options.method || "GET", body: options.body ? JSON.parse(options.body) : null });
+  if ((options.method || "GET") === "PUT" && String(url) === "api/admin/agent-access/settings") {
+    Object.assign(overview.settings, requests[requests.length - 1].body);
+  }
   const payload = lookup(String(url));
   if (payload === undefined) return { ok: false, status: 404, headers: { get: () => "application/json" }, json: async () => ({ error: { code: "not_found", message: "no stub " + url } }) };
   return { ok: true, status: 200, headers: { get: () => "application/json" }, json: async () => payload };
@@ -101,22 +108,51 @@ const body = window.document.querySelector("#section").textContent;
 check("access page rendered", body.includes("Generate temporary access"));
 check("no error state", !body.includes("This section could not be loaded"));
 check("settings form present", Boolean(window.document.querySelector("#access-settings-form")));
-check("base url shown", window.document.querySelector("#access-base-url").value === "http://ha.local:8098");
+check("base url shown", window.document.querySelector("#access-base-url").value === "http://saved.local:8098");
 check("session row present", body.includes("codex-session"));
 check("restart policy label", body.includes("revoke temporary sessions on restart"));
 
-// Fill and submit the issue form.
-window.document.querySelector("#access-name").value = "codex-session-2";
-window.document.querySelectorAll("#access-connections input").forEach((i) => { i.checked = true; i.dispatchEvent(new window.Event("change")); });
-window.document.querySelectorAll("#access-scopes input").forEach((i) => { i.checked = true; i.dispatchEvent(new window.Event("change")); });
-window.document.querySelector("#access-form").dispatchEvent(new window.Event("submit"));
-await tick(200);
+check("guided setup rendered", Boolean(window.document.querySelector("#guide-form")));
+check("advanced setup retained", Boolean(window.document.querySelector("#access-form")));
+check("single connection selected automatically", window.document.querySelectorAll("#guide-connections input:checked").length === 1);
+
+// Guided setup derives scopes and strips a pasted MCP path before issuing.
+window.document.querySelector("#guide-name").value = "codex-guided";
+window.document.querySelector("#guide-mode").value = "write";
+window.document.querySelector("#guide-base-url").value = "http://ha.local:8098/mcp";
+window.document.querySelector("#guide-form").dispatchEvent(new window.Event("submit"));
+await tick(220);
 
 const modal = window.document.querySelector("#modal");
 check("modal opened", modal && !modal.classList.contains("hidden"));
 check("handoff link rendered", (modal?.textContent || "").includes("#code=hag_h_"));
 check("token stays on the agent page", (modal?.textContent || "").includes("not the token"));
 check("POST issued", calls.some((c) => c.startsWith("POST api/admin/agent-access/sessions")));
+const guidedPost = requests.find((request) => request.method === "POST" && request.url === "api/admin/agent-access/sessions");
+check("guided HA read scope", guidedPost?.body.scopes.includes("ha:read"));
+check("guided HA write scope", guidedPost?.body.scopes.includes("ha:write"));
+check("guided operation classes", guidedPost?.body.operation_classes.join(",") === "read,write");
+check("guided base address normalized", requests.some((request) => request.method === "PUT" && request.url === "api/admin/agent-access/settings" && request.body.agent_api_base_url === "http://ha.local:8098"));
+check("guided base address persisted in reloaded form", guidedPost && window.document.querySelector("#access-base-url").value === "http://ha.local:8098");
+const prompt = window.document.querySelector("#agent-setup-prompt")?.value || "";
+check("AI prompt contains handoff", prompt.includes("#code=hag_h_"));
+check("AI prompt contains MCP URL", prompt.includes("http://ha.local:8098/mcp"));
+check("AI prompt contains continuation", prompt.includes("continue as my infrastructure assistant"));
+check("AI prompt contains verification", prompt.includes("/api/v1/health") && prompt.includes("/api/v1/tools"));
+check("AI prompt has no redeemed bearer token", !prompt.includes("Bearer hag_"));
+window.document.querySelector("#handoff-copy-prompt").click();
+await tick(40);
+check("AI prompt copied", clipboard === prompt);
+
+// The original individual-scope flow remains available under Advanced.
+window.document.querySelector("#modal-close").click();
+await tick(40);
+window.document.querySelector("#access-name").value = "codex-session-2";
+window.document.querySelectorAll("#access-connections input").forEach((i) => { i.checked = true; i.dispatchEvent(new window.Event("change")); });
+window.document.querySelectorAll("#access-scopes input").forEach((i) => { i.checked = true; i.dispatchEvent(new window.Event("change")); });
+window.document.querySelector("#access-form").dispatchEvent(new window.Event("submit"));
+await tick(200);
+check("advanced flow still issues", requests.filter((request) => request.method === "POST" && request.url === "api/admin/agent-access/sessions").length === 2);
 
 // Revoke flow: the confirmation dialog must be explicit and then issue the POST.
 window.document.querySelector("#modal-close").click();
@@ -132,6 +168,12 @@ check("revoke confirm button", Boolean(confirmButton));
 confirmButton.click();
 await tick(180);
 check("revoke POST issued", calls.some((c) => c.startsWith("POST api/admin/agent-access/sessions/") && c.endsWith("/revoke")));
+
+// A fresh install gets a usable suggestion instead of a blank address.
+overview.settings.agent_api_base_url = "";
+window.document.querySelector("#refresh").click();
+await tick(150);
+check("fresh install address suggested", window.document.querySelector("#guide-base-url").value === "http://ha.example:8098");
 
 console.log(report.join("\n"));
 if (failures.length) { console.error("\nFAILURES:\n" + failures.join("\n")); process.exit(1); }

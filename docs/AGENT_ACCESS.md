@@ -15,7 +15,7 @@ policy engine and, for writes, a human approval.
 
 | Layer | What it is | Where it lives | Who can read it |
 | --- | --- | --- | --- |
-| **A — upstream** | Home Assistant long-lived token, Proxmox API token/secret, SSH user + private key/passphrase | Encrypted vault (`/data/vault.json`, AES-256-GCM, Argon2id-derived key) plus `/data/unlock.key` when auto-unlock is enabled | Only the gateway process. Never returned by the admin API, agent API, MCP, audit, logs, or the Agent Access page. |
+| **A — upstream** | Home Assistant long-lived token, Proxmox API token/secret, SSH private key/passphrase. The SSH username is non-secret connection metadata, separate from the key. | Secret values in the encrypted vault (`/data/vault.json`, AES-256-GCM, Argon2id-derived key); connection metadata in `/data/gateway.db`; optional `/data/unlock.key` for auto-unlock | Secret values are available only to the gateway process and are never returned by APIs, MCP, audit, logs, or Agent Access. Administrators can manage non-secret connection metadata such as the SSH username. |
 | **B — agent** | `hag_…` bearer token for one temporary session | SHA-256 digest in `/data/gateway.db` (`agents.token_hash`); plaintext exists only in the redeem response | The agent that redeemed the handoff code. The administrator sees only the prefix and status. |
 
 Layer B tokens are generated with `secrets.token_urlsafe(32)` (256 bits of
@@ -44,9 +44,11 @@ agent: open /agent#code=… │  (code never sent to the server; JS strips it)
 expiry / revoke / restart ──► 401 immediately, every surface
 ```
 
-1. **Generate** — an administrator selects connections, scopes, operation
-   classes, and a lifetime. The gateway creates the session record, a
-   server-side policy document, and a handoff code.
+1. **Generate** — the recommended **Connect an AI agent** form lets an
+   administrator choose connections, read-only versus read/control, and a
+   lifetime; it derives the existing scopes automatically. An advanced form
+   still accepts individual scopes and operation classes. The gateway creates
+   the session record, server-side policy document, and handoff code.
 2. **Handoff** — the response contains a link such as
    `http://homeassistant.local:8098/agent#code=hag_h_…`. The fragment holds a
    one-time **code**, never the token. Handoff codes are stored as SHA-256
@@ -63,6 +65,15 @@ expiry / revoke / restart ──► 401 immediately, every surface
 5. **Expire / revoke** — expiry is checked on every request. Revocation is
    immediate, idempotent, and also expires that session's pending approvals.
 6. **Restart** — see section 5.
+
+The guided handoff dialog also creates an editable **AI setup prompt**. It
+contains the single-use handoff URL, MCP/API addresses, verification steps, and
+an instruction to summarize access and ask for the user's first task. It does
+not contain an upstream credential or a redeemed bearer token. The user must
+review and copy it explicitly; the gateway never sends it to an AI provider.
+Because the prompt carries a live handoff code until redemption, it must be
+shared only with the intended agent before expiry. The prompt is shown before
+the session-list refresh so a refresh failure cannot hide the issuance response.
 
 ### Restart policy
 
